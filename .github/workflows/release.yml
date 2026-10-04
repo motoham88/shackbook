@@ -226,7 +226,11 @@ jobs:
               --desktop-file AppDir/usr/share/applications/shackbook.desktop \
               --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/shackbook.png
 
-          version="${GITHUB_REF_NAME:-dev-${GITHUB_SHA:0:7}}"
+          # Same rule as the Windows job: a release tag (v*) names the file;
+          # anything else, e.g. a manual run from feat/foo, gets dev-<sha>, because
+          # a branch name with a slash would turn the file name into a path.
+          version="${GITHUB_REF_NAME}"
+          case "$version" in v*) ;; *) version="dev-${GITHUB_SHA:0:7}" ;; esac
           mv ShackBook*.AppImage "ShackBook-${version}-linux-x86_64.AppImage"
           ls -lh ShackBook-*.AppImage
 
@@ -325,7 +329,11 @@ jobs:
           # Bundle Qt frameworks into the .app
           "$QT_ROOT_DIR/bin/macdeployqt" build/ShackBook.app
 
-          version="${GITHUB_REF_NAME:-dev-${GITHUB_SHA:0:7}}"
+          # Same rule as the Windows job: a release tag (v*) names the file;
+          # anything else, e.g. a manual run from feat/foo, gets dev-<sha>, because
+          # a branch name with a slash would turn the file name into a path.
+          version="${GITHUB_REF_NAME}"
+          case "$version" in v*) ;; *) version="dev-${GITHUB_SHA:0:7}" ;; esac
           dmg_name="ShackBook-${version}-macos-${{ matrix.arch }}.dmg"
 
           # Stage with README/LICENSE alongside the .app
