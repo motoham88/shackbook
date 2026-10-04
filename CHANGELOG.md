@@ -16,6 +16,11 @@ macOS DMG and attaches them to the GitHub release.
   same runner as the Apple Silicon DMG, and CI checks the binary really is Intel code
   before packaging it.
 
+### Changed
+- **The Apple Silicon DMG now runs on macOS 12 or later.** It previously required
+  macOS 14 because no minimum was set, which shut out M1/M2 Macs still on Monterey
+  or Ventura. CI now checks both DMGs' minimum macOS before packaging.
+
 ## [0.7.0] - 2026-08-27
 
 ### Changed

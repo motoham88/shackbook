@@ -11,7 +11,7 @@
 # Artifacts produced:
 #   ShackBook-<tag>-windows-x64.zip      — extract, run ShackBook.exe
 #   ShackBook-<tag>-linux-x86_64.AppImage — chmod +x, run directly
-#   ShackBook-<tag>-macos-arm64.dmg      — Apple Silicon
+#   ShackBook-<tag>-macos-arm64.dmg      — Apple Silicon, macOS 12 or later
 #   ShackBook-<tag>-macos-x86_64.dmg     — Intel Macs, macOS 12 or later
 
 name: Release
@@ -257,15 +257,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: arm64
-            # Unchanged from before this job built Intel: no explicit
-            # deployment target, so the SDK's default applies.
-            deployment_target: ''
-          - arch: x86_64
-            # Many Intel Macs stop at macOS 12 or 13, so target the oldest
-            # macOS that Qt 6.8 itself supports rather than the SDK default.
-            deployment_target: '12.0'
+        arch: [arm64, x86_64]
+    env:
+      # Both DMGs run on macOS 12 or later: the oldest macOS Qt 6.8 itself
+      # supports. Without an explicit target the SDK default applied, which
+      # made the app require macOS 14 and shut out Intel Macs and M1/M2 Macs
+      # still on Monterey or Ventura.
+      MACOS_DEPLOYMENT_TARGET: '12.0'
     steps:
       - uses: actions/checkout@v5
 
@@ -284,14 +282,15 @@ jobs:
 
       - name: Configure
         run: |
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSHACKBOOK_RELEASE=ON               -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}               ${{ matrix.deployment_target && format('-DCMAKE_OSX_DEPLOYMENT_TARGET={0}', matrix.deployment_target) || '' }}
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSHACKBOOK_RELEASE=ON               -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}               -DCMAKE_OSX_DEPLOYMENT_TARGET=$MACOS_DEPLOYMENT_TARGET
 
       - name: Build
         run: cmake --build build
 
-      - name: Check the binary's architecture
-        # A cross-compile that silently fell back to the host architecture
-        # would still produce a DMG; refuse to ship one with the wrong code.
+      - name: Check the binary's architecture and minimum macOS
+        # A cross-compile that silently fell back to the host architecture,
+        # or a deployment target that didn't take, would still produce a DMG;
+        # refuse to ship one that is wrong.
         run: |
           bin=build/ShackBook.app/Contents/MacOS/ShackBook
           archs="$(lipo -archs "$bin")"
@@ -300,7 +299,12 @@ jobs:
             echo "::error::expected ${{ matrix.arch }}, got $archs"
             exit 1
           fi
-          otool -l "$bin" | grep -A4 LC_BUILD_VERSION | grep -E 'minos|sdk' || true
+          minos="$(otool -l "$bin" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')"
+          echo "ShackBook minimum macOS: $minos"
+          if [ "$minos" != "$MACOS_DEPLOYMENT_TARGET" ]; then
+            echo "::error::expected minimum macOS $MACOS_DEPLOYMENT_TARGET, got $minos"
+            exit 1
+          fi
 
       - name: Launch check under Rosetta (Intel only)
         # Catches a build that links but cannot start on Intel (a missing
