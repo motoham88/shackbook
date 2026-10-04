@@ -316,6 +316,10 @@ bool TciClient::stopCw()
     if (!m_socket || m_socket->state() != QAbstractSocket::ConnectedState)
         return false;
     send(QStringLiteral("cw_macros_stop;"));
+    // Out to the OS now, not on the next event-loop turn: a stop is often
+    // followed at once by tearing the link down (disconnect, quit), and one
+    // left in the buffer leaves the radio sending what it already holds.
+    m_socket->flush();
     return true;
 }
 

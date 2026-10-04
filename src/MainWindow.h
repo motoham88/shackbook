@@ -18,14 +18,19 @@
 #include "Qso.h"
 
 #include <QMainWindow>
+#include <QVector>
+
+#include <memory>
 
 class QAction;
+class QCloseEvent;
 class QComboBox;
 class QFrame;
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
 class QPushButton;
+class QShortcut;
 class QTableWidget;
 class QTimer;
 
@@ -46,6 +51,11 @@ class QsoPartyDialog;
 class SessionMapDialog;
 class AprsActivityDialog;
 struct SpotData;
+class ICwSender;
+class CwKeyer;
+class CwKeyerPanel;
+class CwStopKeyFilter;
+struct CwContext;
 namespace Server { class WsjtxAdifReceiver; }
 
 class MainWindow : public QMainWindow {
@@ -53,6 +63,10 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow() override;
+
+protected:
+    // Stops CW before the window closes and the link goes with it (#32).
+    void closeEvent(QCloseEvent* event) override;
 
 private slots:
     // Quick-entry
@@ -155,6 +169,21 @@ private:
     void startCallsignLookup(const QString& call);
     qint64 selectedQsoId() const;
 
+    // ── CW keyer (#32) ────────────────────────────────────────────────
+    // Built once; applyCwKeyerFromSettings() turns it on or off from the
+    // open log's CW_KEYER_ENABLED. Called only from startup, Settings and a
+    // log switch, never from a QSO save: nothing on the save path touches
+    // the keyer.
+    void buildCwKeyer();
+    void applyCwKeyerFromSettings();
+    void refreshCwPanelRadioState();
+    // Before the TCI link is closed: a server like AetherSDR can keep sending
+    // what is already in the radio's CWX buffer after the link drops, and
+    // once it has dropped no stop can reach it.
+    void stopCwBeforeLinkGoes();
+    // QuickEntry and settings as they are right now, for the keyer's tokens.
+    CwContext cwContext() const;
+
     LogbookModel*    m_model{nullptr};
     TciClient*       m_tci{nullptr};
     // The non-TCI path: Hamlib rigctld, for Icom/Yaesu/Kenwood and anything
@@ -197,6 +226,15 @@ private:
     QString m_lookupFillCall;    // …valid only while the call field matches
     QString m_operatorCall;          // whose log is open (multi-log)
     Server::WsjtxAdifReceiver* m_wsjtx{};  // WSJT-X UDP/ADIF → active log
+
+    // CW keyer (#32). The F-key shortcuts and the Esc filter exist only
+    // while the keyer is enabled, so for anyone who has not opted in the
+    // keys do nothing at all.
+    std::unique_ptr<ICwSender> m_cwSender;
+    CwKeyer*                   m_cwKeyer{};
+    CwKeyerPanel*              m_cwPanel{};
+    CwStopKeyFilter*           m_cwStopFilter{};
+    QVector<QShortcut*>        m_cwShortcuts;
 
     // Header
     QLabel*  m_myCallLabel{};

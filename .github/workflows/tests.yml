@@ -7,9 +7,11 @@
 # two weeks without anyone noticing (#21). This job fails fast instead. It
 # builds no release packages. See #22.
 #
-# The registered tests link only Qt Core/Network/Sql/WebSockets and stand up
-# their own localhost servers: no display, no radio, no Hamlib needed.
-# rigctld_live_probe is deliberately not add_test'd (it needs a real rigctld).
+# The registered tests stand up their own localhost servers: no display, no
+# radio, no Hamlib needed. cw_panel_test is the one that links Qt Widgets;
+# it runs on the offscreen platform set below. rigctld_live_probe and
+# tci_cw_live_probe are deliberately not add_test'd (they need a real
+# rigctld or TCI server).
 
 name: Tests
 

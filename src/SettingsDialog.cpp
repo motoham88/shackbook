@@ -9,6 +9,7 @@
 #include <QSerialPortInfo>
 #include "TciDiscovery.h"
 #include "ShackStatus.h"   // default MQTT topic prefix
+#include "CwKeyerSettings.h"
 
 #include <QComboBox>
 #include <QEventLoop>
@@ -22,6 +23,8 @@
 #include <QDoubleSpinBox>
 #include <QCheckBox>
 #include <QFormLayout>
+#include <QHBoxLayout>
+#include <QScrollArea>
 #include <QVBoxLayout>
 #include <QDialogButtonBox>
 #include <QTabWidget>
@@ -318,6 +321,64 @@ void SettingsDialog::buildUI()
     ctstL->addRow("Next STX serial", m_stxNext);
     tabs->addTab(ctst, "Contest");
 
+    // ── CW keyer (#32) ──────────────────────────────────────────────────
+    // The first thing in ShackBook that can transmit, so it is off until the
+    // operator turns it on here, and says so in as many words.
+    auto* cw  = new QWidget;
+    auto* cwL = new QFormLayout(cw);
+    m_cwEnable = new QCheckBox("Allow ShackBook to send CW");
+    auto* cwNote = new QLabel(
+        "Sends CW through the TCI radio link (AetherSDR, ExpertSDR or a TCI bridge). "
+        "When on, the CW keyer panel appears and F1-F8 send these messages while "
+        "ShackBook has focus. Nothing is ever sent except by a button or F-key: "
+        "not on saving a QSO, a spot click or connecting. Esc stops sending anywhere "
+        "in ShackBook. Only sends while the radio is in CW.");
+    cwNote->setWordWrap(true);
+    cwL->addRow(m_cwEnable);
+    cwL->addRow(cwNote);
+    auto* tokens = new QLabel(
+        "Tokens: {CALL} {MYCALL} {RST} {NR} {EXCH} {NAME}. A message whose token is "
+        "empty is not sent.");
+    tokens->setWordWrap(true);
+    cwL->addRow(tokens);
+    for (int i = 0; i < 8; ++i) {
+        auto* label = new QLineEdit;
+        label->setMaximumWidth(90);
+        label->setPlaceholderText("label");
+        auto* text = new QLineEdit;
+        auto* row = new QHBoxLayout;
+        row->addWidget(label);
+        row->addWidget(text, 1);
+        cwL->addRow(QStringLiteral("F%1").arg(i + 1), row);
+        m_cwLabels << label;
+        m_cwTexts  << text;
+    }
+    m_cwCutRst = new QCheckBox("Cut numbers in {RST} (599 → 5NN)");
+    m_cwCutNr  = new QCheckBox("Cut numbers in {NR} (001 → TT1)");
+    m_cwCutOne = new QCheckBox("Also cut 1 → A");
+    m_cwName   = new QLineEdit;
+    m_cwName->setPlaceholderText("first name, e.g. TONY");
+    cwL->addRow(m_cwCutRst);
+    cwL->addRow(m_cwCutNr);
+    cwL->addRow(m_cwCutOne);
+    cwL->addRow("{NAME}", m_cwName);
+    auto* cwDefaults = new QPushButton("Restore default messages");
+    connect(cwDefaults, &QPushButton::clicked, this, [this] {
+        const auto d = defaultCwMacros();
+        for (int i = 0; i < m_cwTexts.size() && i < d.size(); ++i) {
+            m_cwLabels[i]->setText(d[i].label);
+            m_cwTexts[i]->setText(d[i].text);
+        }
+    });
+    cwL->addRow(cwDefaults);
+    // Eight message rows make this the tallest tab; scroll rather than
+    // stretch the whole dialog past a laptop screen.
+    auto* cwScroll = new QScrollArea;
+    cwScroll->setWidgetResizable(true);
+    cwScroll->setFrameShape(QFrame::NoFrame);
+    cwScroll->setWidget(cw);
+    tabs->addTab(cwScroll, "CW keyer");
+
     // ── Cabrillo ────────────────────────────────────────────────────────
     auto* cab = new QWidget;
     auto* cabL = new QFormLayout(cab);
@@ -553,6 +614,20 @@ void SettingsDialog::populate()
     setCombo(m_cbCatPower,       m_model->settingValue("CABRILLO_CAT_POWER",        "HIGH"));
     setCombo(m_cbCatStation,     m_model->settingValue("CABRILLO_CAT_STATION",      "FIXED"));
     setCombo(m_cbCatTransmitter, m_model->settingValue("CABRILLO_CAT_TRANSMITTER",  "ONE"));
+
+    {
+        const CwKeyerConfig cw = loadCwKeyerConfig(
+            [this](const QString& k, const QString& d) { return m_model->settingValue(k, d); });
+        m_cwEnable->setChecked(cw.enabled);
+        for (int i = 0; i < m_cwTexts.size() && i < cw.macros.size(); ++i) {
+            m_cwLabels[i]->setText(cw.macros[i].label);
+            m_cwTexts[i]->setText(cw.macros[i].text);
+        }
+        m_cwCutRst->setChecked(cw.cut.cutRst);
+        m_cwCutNr->setChecked(cw.cut.cutNr);
+        m_cwCutOne->setChecked(cw.cut.cutOne);
+        m_cwName->setText(cw.name);
+    }
 }
 
 void SettingsDialog::refreshHamlibGuidance()
@@ -864,6 +939,20 @@ void SettingsDialog::onAccept()
     m_model->setSetting("CABRILLO_CAT_POWER",       m_cbCatPower->currentText());
     m_model->setSetting("CABRILLO_CAT_STATION",     m_cbCatStation->currentText());
     m_model->setSetting("CABRILLO_CAT_TRANSMITTER", m_cbCatTransmitter->currentText());
+
+    {
+        CwKeyerConfig cw;
+        cw.enabled = m_cwEnable->isChecked();
+        for (int i = 0; i < m_cwTexts.size() && i < cw.macros.size(); ++i) {
+            cw.macros[i].label = m_cwLabels[i]->text();
+            cw.macros[i].text  = m_cwTexts[i]->text();
+        }
+        cw.cut.cutRst = m_cwCutRst->isChecked();
+        cw.cut.cutNr  = m_cwCutNr->isChecked();
+        cw.cut.cutOne = m_cwCutOne->isChecked();
+        cw.name = m_cwName->text();
+        saveCwKeyerConfig(cw, [this](const QString& k, const QString& v) { m_model->setSetting(k, v); });
+    }
 
     accept();
 }

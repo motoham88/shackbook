@@ -171,6 +171,8 @@ public:
     // draining its buffer after we believe it finished, and a stop that
     // arrives when nothing is sending costs nothing. The only refusal is
     // having no open socket to write to. False when nothing was written.
+    // Flushed to the socket before returning, so a disconnect straight
+    // after cannot strand it in the buffer.
     bool stopCw();
 
     // Send `cw_macros_speed:<wpm>;`, clamped to kTciCwMinWpm..kTciCwMaxWpm,

@@ -227,7 +227,14 @@ void clientEndToEnd()
     check(!server.received.contains(QStringLiteral("cw_")),
           "nothing refused while down is replayed on reconnect");
 
+    // ⭐ A stop immediately followed by a disconnect — Settings saved, or the
+    // app closed, mid-message — still reaches the server. After the link
+    // goes, the radio keeps sending whatever it holds.
+    server.received.clear();
+    check(tci.stopCw(), "stopCw just before a disconnect reports sent");
     tci.disconnectFromServer();
+    check(waitFor([&] { return server.received.contains(QStringLiteral("cw_macros_stop;")); }),
+          "and the stop reaches the server despite the disconnect");
 }
 
 } // namespace

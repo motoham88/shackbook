@@ -39,6 +39,10 @@ set(SHACKBOOK_SOURCES
     src/CwSender.h
     src/CwKeyer.cpp
     src/CwKeyer.h
+    src/CwKeyerSettings.cpp
+    src/CwKeyerSettings.h
+    src/CwKeyerPanel.cpp
+    src/CwKeyerPanel.h
     src/TxPowerTracker.cpp
     src/TxPowerTracker.h
     src/MqttPacket.cpp
@@ -352,6 +356,27 @@ if(SHACKBOOK_TESTS)
     target_include_directories(cw_keyer_test PRIVATE src)
     target_link_libraries(cw_keyer_test PRIVATE Qt6::Core Qt6::Network Qt6::WebSockets)
     add_test(NAME cw_keyer_test COMMAND cw_keyer_test)
+
+    # CW keyer (#32): settings round trip, the panel headless (offscreen),
+    # and Esc through the application-wide stop filter.
+    add_executable(cw_panel_test
+        tests/cw_panel_test.cpp
+        src/CwKeyer.cpp
+        src/CwKeyer.h
+        src/CwKeyerPanel.cpp
+        src/CwKeyerPanel.h
+        src/CwKeyerSettings.cpp
+        src/CwKeyerSettings.h
+        src/CwSender.h
+        src/TciClient.cpp
+        src/TciClient.h
+        src/TxPowerTracker.cpp
+        src/TxPowerTracker.h
+    )
+    target_include_directories(cw_panel_test PRIVATE src)
+    target_link_libraries(cw_panel_test PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::WebSockets)
+    add_test(NAME cw_panel_test COMMAND cw_panel_test)
+    set_tests_properties(cw_panel_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     # MQTT shack status (#24): packet bytes, HA discovery, and the publisher
     # against a loopback fake broker.

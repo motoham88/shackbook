@@ -8,11 +8,14 @@
 //   • Lookup   — callsign → name/QTH lookup chain (worked-before, cty.dat,
 //                QRZ XML / HamQTH / callook.info online providers)
 //   • Contest  — contest mode toggle, contest id, next STX serial
+//   • CW keyer — the master enable (off by default), F1-F8 messages,
+//                cut numbers, {NAME} (#32)
 //   • Cabrillo — header fields used by Cabrillo export
 //
 // All values are persisted to the LogbookModel's settings table on Save.
 
 #include <QDialog>
+#include <QVector>
 
 class QComboBox;
 class QLabel;
@@ -111,6 +114,15 @@ private:
     QCheckBox*  m_mqttPublishQso{};
     QComboBox*  m_contestId{};
     QSpinBox*   m_stxNext{};
+
+    // CW keyer (#32)
+    QCheckBox*          m_cwEnable{};
+    QVector<QLineEdit*> m_cwLabels;
+    QVector<QLineEdit*> m_cwTexts;
+    QCheckBox*          m_cwCutRst{};
+    QCheckBox*          m_cwCutNr{};
+    QCheckBox*          m_cwCutOne{};
+    QLineEdit*          m_cwName{};
 
     // Cabrillo
     QLineEdit*  m_cbName{};
