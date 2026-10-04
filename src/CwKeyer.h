@@ -6,9 +6,9 @@
 // transmit safety. The rules, which are not up for negotiation:
 //
 //   1. Off by default. While disabled, nothing here reaches the sender: no
-//      send, no stop, no speed. The one exception is the moment of disabling
-//      mid-message, which sends a stop: turning the keyer off must not leave
-//      a message keying.
+//      send, no stop, no speed, not even a speed query. The one exception is
+//      the moment of disabling mid-message, which sends a stop: turning the
+//      keyer off must not leave a message keying.
 //   2. Only an explicit operator action sends: sendMacro() is called from a
 //      button click or an F-key, never on QSO save, spot click, connect or a
 //      timer. Nothing in this class sends on its own.
@@ -119,7 +119,8 @@ public:
     CwKeyer(ICwSender* sender, ContextProvider context, QObject* parent = nullptr);
     ~CwKeyer() override;
 
-    // Off by default. Disabling mid-message sends a stop (rule 1).
+    // Off by default. Disabling mid-message sends a stop (rule 1). Enabling
+    // asks the radio for its speed, which the hang and the panel need.
     void setEnabled(bool on);
     bool isEnabled() const { return m_enabled; }
 
@@ -148,7 +149,8 @@ public:
     void setTimings(int noKeyMs, int hangOverrideMs, int stopTimeoutMs);
 
 public slots:
-    // Wire to the radio link's transmit and connection state.
+    // Wire to the radio link's transmit and connection state. A connect
+    // while enabled asks the radio for its speed.
     void onTransmittingChanged(bool transmitting);
     void onConnectionChanged(bool connected);
 

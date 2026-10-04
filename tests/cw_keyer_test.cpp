@@ -66,7 +66,7 @@ public:
     QString mode      = QStringLiteral("CW");
     int     speed     = 24;
     bool    accept    = true;
-    QStringList log;   // every call, in order: "send:TEXT", "stop", "speed:N"
+    QStringList log;   // every call, in order: "send:TEXT", "stop", "speed:N", "speed?"
 
     bool    cwConnected() const override { return connected; }
     QString cwMode() const override      { return mode; }
@@ -74,6 +74,7 @@ public:
     bool    stopCwText() override        { log << QStringLiteral("stop"); return true; }
     bool    setCwTextSpeed(int w) override { log << QStringLiteral("speed:%1").arg(w); return true; }
     int     cwTextSpeed() const override { return speed; }
+    bool    requestCwTextSpeed() override { log << QStringLiteral("speed?"); return true; }
 };
 
 CwContext station()
@@ -165,13 +166,20 @@ void gates()
         k.onTransmittingChanged(true);
         k.onTransmittingChanged(false);
         k.onConnectionChanged(false);
-        check(s.log.isEmpty(), "while disabled: no send, no stop, no speed, for any input");
+        k.onConnectionChanged(true);
+        check(s.log.isEmpty(), "while disabled: no send, no stop, no speed, no query, for any input");
         check(k.sendMacro(0) == CwKeyer::Result::Disabled, "and a send says why");
     }
 
     FakeSender s;
     CwKeyer k(&s, station);
     k.setEnabled(true);
+    check(s.log == QStringList{QStringLiteral("speed?")},
+          "enabling asks the radio for its speed, and sends nothing else");
+    s.log.clear();
+    k.onConnectionChanged(true);
+    check(s.log == QStringList{QStringLiteral("speed?")}, "so does a connect while enabled");
+    s.log.clear();
 
     s.connected = false;
     check(k.sendMacro(0) == CwKeyer::Result::NotConnected && s.log.isEmpty(),
@@ -194,6 +202,7 @@ void gates()
 
     CwKeyer noCall(&s, [] { CwContext c = station(); c.call.clear(); return c; });
     noCall.setEnabled(true);
+    s.log.clear();
     check(noCall.sendMacro(4) == CwKeyer::Result::BadMacro && s.log.isEmpty(),
           "F5 with no call entered: refused, nothing sent");
     checkEq(noCall.lastError(), QStringLiteral("Nothing in CALL"), "with the reason");
@@ -224,6 +233,7 @@ void stateMachine()
     CwKeyer k(&s, station);
     k.setTimings(/*noKeyMs*/ 150, /*hangOverrideMs*/ 120, /*stopTimeoutMs*/ 300);
     k.setEnabled(true);
+    s.log.clear();
     int didNotKey = 0, notConfirmed = 0;
     QObject::connect(&k, &CwKeyer::radioDidNotKey, [&] { ++didNotKey; });
     QObject::connect(&k, &CwKeyer::stopNotConfirmed, [&] { ++notConfirmed; });
@@ -282,6 +292,25 @@ void stateMachine()
           "a second message stops the first, then sends");
     k.onTransmittingChanged(false);
     waitFor([&] { return k.state() == CwKeyer::State::Idle; });
+    check(didNotKey == 1, "replacing a message is not a 'didn't key'");
+    s.log.clear();
+
+    // ⭐ A message sent while the radio is already transmitting — the usual
+    // case for a replace: with a break-in delay the radio never leaves
+    // transmit between the stop and the new message, so no fresh
+    // transmitting edge arrives. That must not read as "didn't key", and the
+    // keyer must stay Sending, or disabling it would not send a stop.
+    k.sendMacro(0);
+    k.onTransmittingChanged(true);
+    k.sendMacro(2);                   // replace, with no further edges
+    pause(250);                       // past noKeyMs
+    check(didNotKey == 1, "no 'didn't key' for a message sent while transmitting");
+    check(k.state() == CwKeyer::State::Sending, "still Sending while the radio transmits");
+    s.log.clear();
+    k.setEnabled(false);
+    check(s.log == QStringList{QStringLiteral("stop")}, "so disabling it still sends a stop");
+    k.setEnabled(true);
+    k.onTransmittingChanged(false);
     s.log.clear();
 
     // ⭐ Disabling mid-message stops it, and then nothing more goes out.

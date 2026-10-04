@@ -180,7 +180,12 @@ void CwKeyer::setEnabled(bool on)
     if (!on && m_state != State::Idle && m_sender)
         m_sender->stopCwText();
     m_enabled = on;
-    if (!on) finish();
+    if (!on) { finish(); return; }
+    // The hang is timed from the radio's speed, and AetherSDR does not
+    // report it until asked. A read, so it does not break "nothing CW is
+    // sent until the operator asks": and only now the keyer is on.
+    if (m_sender && m_sender->cwConnected())
+        m_sender->requestCwTextSpeed();
 }
 
 CwKeyer::Result CwKeyer::sendMacro(int index)
@@ -227,10 +232,16 @@ CwKeyer::Result CwKeyer::sendMacro(int index)
     if (!x.dropped.isEmpty())
         m_lastError = QStringLiteral("Not sent (no Morse for them): %1").arg(x.dropped);
 
-    m_keyed = false;
+    // Already transmitting — the usual case for a replace, since with a
+    // break-in delay the radio never leaves transmit between the stop and
+    // the new message — counts as keyed. Waiting for a fresh transmitting
+    // edge that will never come would report "didn't key" and drop to Idle
+    // with the radio still sending.
+    m_keyed = m_transmitting;
     m_hangTimer->stop();
     m_stopTimer->stop();
-    m_noKeyTimer->start();
+    if (m_keyed) m_noKeyTimer->stop();
+    else         m_noKeyTimer->start();
     m_sendingText = x.text;
     emit sendingTextChanged(m_sendingText);
     setState(State::Sending);
@@ -288,7 +299,10 @@ void CwKeyer::onConnectionChanged(bool connected)
     if (!connected) {
         m_transmitting = false;
         finish();
+        return;
     }
+    if (m_enabled && m_sender)
+        m_sender->requestCwTextSpeed();
 }
 
 void CwKeyer::onNoKeyTimeout()

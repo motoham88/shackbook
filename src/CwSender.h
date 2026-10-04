@@ -32,6 +32,10 @@ public:
     virtual bool    setCwTextSpeed(int wpm) = 0;
     // The radio's reported speed (WPM), 0 when unknown.
     virtual int     cwTextSpeed() const = 0;
+    // Ask the radio for its speed; the answer updates cwTextSpeed(). A read,
+    // not a transmit. Needed because AetherSDR does not report the speed
+    // until asked. False when nothing was written.
+    virtual bool    requestCwTextSpeed() = 0;
 };
 
 // The TCI backend: a thin adapter over TciClient's CW methods. The keyer's
@@ -47,6 +51,7 @@ public:
     bool    stopCwText() override                     { return m_tci && m_tci->stopCw(); }
     bool    setCwTextSpeed(int wpm) override          { return m_tci && m_tci->setCwSpeed(wpm); }
     int     cwTextSpeed() const override              { return m_tci ? m_tci->cwSpeedWpm() : 0; }
+    bool    requestCwTextSpeed() override             { return m_tci && m_tci->requestCwSpeed(); }
 
 private:
     TciClient* m_tci;
