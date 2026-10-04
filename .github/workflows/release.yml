@@ -11,7 +11,8 @@
 # Artifacts produced:
 #   ShackBook-<tag>-windows-x64.zip      — extract, run ShackBook.exe
 #   ShackBook-<tag>-linux-x86_64.AppImage — chmod +x, run directly
-#   ShackBook-<tag>-macos-arm64.dmg      — Apple Silicon only for v0.1
+#   ShackBook-<tag>-macos-arm64.dmg      — Apple Silicon
+#   ShackBook-<tag>-macos-x86_64.dmg     — Intel Macs, macOS 12 or later
 
 name: Release
 
@@ -235,13 +236,32 @@ jobs:
           path: ShackBook-*-linux-x86_64.AppImage
           if-no-files-found: error
 
-  # ── macOS (Apple Silicon) ───────────────────────────────────────────────
+  # ── macOS (Apple Silicon + Intel) ───────────────────────────────────────
   build-macos:
     # Pinned, not -latest: the newer runner image's SDK dropped the legacy
     # AGL framework that Qt 6.8's link interface still references, killing
     # the link with "ld: framework 'AGL' not found" (first hit: v0.4.0).
     # Revisit when QT_VERSION moves to a release that no longer wants AGL.
+    #
+    # Both architectures build on this Apple Silicon runner. aqt's macOS Qt
+    # (clang_64) is a universal x86_64+arm64 build, and ShackBook links
+    # nothing but Qt (Hamlib's rigctld is found at runtime), so the Intel
+    # build is a plain cross-compile. That keeps the AGL pin above in force
+    # for both, and avoids GitHub's Intel runner images, which are being
+    # retired.
     runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            # Unchanged from before this job built Intel: no explicit
+            # deployment target, so the SDK's default applies.
+            deployment_target: ''
+          - arch: x86_64
+            # Many Intel Macs stop at macOS 12 or 13, so target the oldest
+            # macOS that Qt 6.8 itself supports rather than the SDK default.
+            deployment_target: '12.0'
     steps:
       - uses: actions/checkout@v5
 
@@ -259,10 +279,46 @@ jobs:
         run: brew install ninja
 
       - name: Configure
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSHACKBOOK_RELEASE=ON
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSHACKBOOK_RELEASE=ON               -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}               ${{ matrix.deployment_target && format('-DCMAKE_OSX_DEPLOYMENT_TARGET={0}', matrix.deployment_target) || '' }}
 
       - name: Build
         run: cmake --build build
+
+      - name: Check the binary's architecture
+        # A cross-compile that silently fell back to the host architecture
+        # would still produce a DMG; refuse to ship one with the wrong code.
+        run: |
+          bin=build/ShackBook.app/Contents/MacOS/ShackBook
+          archs="$(lipo -archs "$bin")"
+          echo "ShackBook binary architectures: $archs"
+          if [ "$archs" != "${{ matrix.arch }}" ]; then
+            echo "::error::expected ${{ matrix.arch }}, got $archs"
+            exit 1
+          fi
+          otool -l "$bin" | grep -A4 LC_BUILD_VERSION | grep -E 'minos|sdk' || true
+
+      - name: Launch check under Rosetta (Intel only)
+        # Catches a build that links but cannot start on Intel (a missing
+        # framework slice, a bad rpath). Rosetta is not guaranteed on hosted
+        # runners, so skip with a warning rather than fail when it's absent.
+        if: matrix.arch == 'x86_64'
+        run: |
+          if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+            echo "::warning::Rosetta 2 not available on this runner; skipping the Intel launch check"
+            exit 0
+          fi
+          QT_QPA_PLATFORM=offscreen arch -x86_64 build/ShackBook.app/Contents/MacOS/ShackBook &
+          pid=$!
+          sleep 10
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "ShackBook (x86_64) still running after 10 s under Rosetta: launch OK"
+            kill "$pid"
+          else
+            wait "$pid"; rc=$?
+            echo "::error::ShackBook (x86_64) exited within 10 s under Rosetta (exit $rc)"
+            exit 1
+          fi
 
       - name: macdeployqt + DMG
         run: |
@@ -270,23 +326,20 @@ jobs:
           "$QT_ROOT_DIR/bin/macdeployqt" build/ShackBook.app
 
           version="${GITHUB_REF_NAME:-dev-${GITHUB_SHA:0:7}}"
-          dmg_name="ShackBook-${version}-macos-arm64.dmg"
+          dmg_name="ShackBook-${version}-macos-${{ matrix.arch }}.dmg"
 
           # Stage with README/LICENSE alongside the .app
           mkdir -p dmg-stage
           cp -R build/ShackBook.app dmg-stage/
           cp README.md LICENSE dmg-stage/
 
-          hdiutil create -volname "ShackBook" \
-              -srcfolder dmg-stage \
-              -ov -format UDZO \
-              "$dmg_name"
+          hdiutil create -volname "ShackBook"               -srcfolder dmg-stage               -ov -format UDZO               "$dmg_name"
           ls -lh "$dmg_name"
 
       - uses: actions/upload-artifact@v5
         with:
-          name: macos
-          path: ShackBook-*-macos-arm64.dmg
+          name: macos-${{ matrix.arch }}
+          path: ShackBook-*-macos-${{ matrix.arch }}.dmg
           if-no-files-found: error
 
   # ── Publish GitHub Release ──────────────────────────────────────────────

@@ -25,6 +25,7 @@ Pre-built binaries — including a Windows installer — are on the
 - **Windows portable zip** — `ShackBook-<version>-windows-x64.zip` (unzip, run `ShackBook.exe`)
 - **Linux AppImage** — `ShackBook-<version>-linux-x86_64.AppImage` (`chmod +x` and run)
 - **macOS DMG (Apple Silicon)** — `ShackBook-<version>-macos-arm64.dmg`
+- **macOS DMG (Intel)** — `ShackBook-<version>-macos-x86_64.dmg` (macOS 12 or later)
 
 Or build from source — see [Build](#build).
 
