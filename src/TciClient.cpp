@@ -129,6 +129,12 @@ void TciClient::onDisconnected()
     // Readings from before the drop may belong to a different radio or a
     // long-gone transmission; never log them against a new contact.
     m_txPower.reset();
+    // The next server may run at a different speed; show "unknown" until it
+    // says, rather than the old radio's number.
+    if (m_cwSpeedWpm != 0) {
+        m_cwSpeedWpm = 0;
+        emit cwSpeedChanged(0);
+    }
     if (m_transmitting) {
         m_transmitting = false;
         emit transmittingChanged(false);
@@ -269,6 +275,56 @@ bool TciClient::setModeString(const QString& adifMode)
     return true;
 }
 
+QString tciCwMacroCommand(const QString& text)
+{
+    const QString t = text.trimmed();
+    if (t.isEmpty()) return {};
+    for (const QChar c : t) {
+        const char16_t u = c.unicode();
+        // Printable ASCII only: control characters and anything beyond 0x7E
+        // have no Morse meaning and no agreed handling on any TCI server.
+        if (u < 0x20 || u > 0x7E) return {};
+        // ';' terminates a TCI command; the remainder would be read as a
+        // fresh command of whatever it happened to spell.
+        if (u == u';') return {};
+    }
+    return QStringLiteral("cw_macros:0,%1;").arg(t);
+}
+
+bool TciClient::sendCw(const QString& text)
+{
+    if (!m_connected) return false;
+    const QString cmd = tciCwMacroCommand(text);
+    if (cmd.isEmpty()) return false;
+    send(cmd);
+    return true;
+}
+
+bool TciClient::stopCw()
+{
+    // Checks the socket, not m_connected: see the header. send() would
+    // silently drop it otherwise, and the caller deserves to know.
+    if (!m_socket || m_socket->state() != QAbstractSocket::ConnectedState)
+        return false;
+    send(QStringLiteral("cw_macros_stop;"));
+    return true;
+}
+
+bool TciClient::setCwSpeed(int wpm)
+{
+    if (!m_connected) return false;
+    const int clamped = qBound(kTciCwMinWpm, wpm, kTciCwMaxWpm);
+    send(QStringLiteral("cw_macros_speed:%1;").arg(clamped));
+    return true;
+}
+
+bool TciClient::requestCwSpeed()
+{
+    if (!m_connected) return false;
+    send(QStringLiteral("cw_macros_speed;"));
+    return true;
+}
+
 
 void TciClient::parseLine(const QString& line)
 {
@@ -356,6 +412,18 @@ void TciClient::parseLine(const QString& line)
                 m_txPower.addForwardPower(fwd, m_clock.elapsed());
                 emit txSensorsReceived(fwd, okSwr ? swr : 0.0);
             }
+        }
+    } else if (cmd == "cw_macros_speed" && args.size() >= 1) {
+        // cw_macros_speed:wpm — the answer to requestCwSpeed() and the echo
+        // of setCwSpeed(). The speed is global (spec shape has no TRX), but
+        // read the LAST argument so a `cw_macros_speed:0,25;` form also
+        // means 25, the same rule AetherSDR applies to what it receives
+        // (TciProtocol::cmdCwMacrosSpeed).
+        bool ok = false;
+        const int wpm = args.last().trimmed().toInt(&ok);
+        if (ok && wpm > 0 && wpm != m_cwSpeedWpm) {
+            m_cwSpeedWpm = wpm;
+            emit cwSpeedChanged(m_cwSpeedWpm);
         }
     }
     // Other events (drive, rit, xit, sql, ...) intentionally ignored.

@@ -321,6 +321,19 @@ if(SHACKBOOK_TESTS)
     target_link_libraries(tx_power_test PRIVATE Qt6::Core Qt6::Network Qt6::WebSockets)
     add_test(NAME tx_power_test COMMAND tx_power_test)
 
+    # CW keyer (#32): the TCI commands that key the transmitter — exact bytes,
+    # refusals, nothing on connect, nothing queued across a reconnect.
+    add_executable(cw_send_test
+        tests/cw_send_test.cpp
+        src/TciClient.cpp
+        src/TciClient.h
+        src/TxPowerTracker.cpp
+        src/TxPowerTracker.h
+    )
+    target_include_directories(cw_send_test PRIVATE src)
+    target_link_libraries(cw_send_test PRIVATE Qt6::Core Qt6::Network Qt6::WebSockets)
+    add_test(NAME cw_send_test COMMAND cw_send_test)
+
     # MQTT shack status (#24): packet bytes, HA discovery, and the publisher
     # against a loopback fake broker.
     add_executable(mqtt_test

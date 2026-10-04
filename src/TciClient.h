@@ -52,6 +52,30 @@ inline QString tciNicknameKey(const QString& host, const QString& port)
 // means "leave the radio alone" rather than "pick something".
 QString tciModulationForAdifMode(const QString& adifMode, double currentMhz);
 
+// CW text -> the complete `cw_macros:0,<text>;` command, as a pure function so
+// the bytes that key a transmitter can be pinned without a socket (#32).
+//
+// This is the transport's last line of defence, not the sanitiser: CwKeyer
+// decides what an operator's macro becomes. Here we only refuse what would
+// corrupt the TCI stream or the radio's buffer: `;` (it ends the command and
+// the rest would be parsed as a NEW command), control characters, anything
+// outside printable ASCII, and text that is empty once trimmed. Refusing
+// rather than stripping is deliberate: silently sending something other than
+// what the caller asked for is how a wrong callsign goes out on the air.
+//
+// Commas are kept. AetherSDR keys everything after `<trx>,` (so
+// `cw_macros:0,CQ,CQ` sends "CQ,CQ"); whether other servers do is CwKeyer's
+// call to make.
+//
+// Leading and trailing whitespace is trimmed (it has no Morse meaning); inner
+// text is passed through untouched. Returns an empty string when the text is
+// refused.
+QString tciCwMacroCommand(const QString& text);
+
+// Lowest and highest speed setCwSpeed() will send, in WPM.
+inline constexpr int kTciCwMinWpm = 5;
+inline constexpr int kTciCwMaxWpm = 60;
+
 
 class TciClient : public QObject {
     Q_OBJECT
@@ -123,6 +147,52 @@ public:
     // entirely, so failing here must not prevent the frequency change.
     bool setModeString(const QString& adifMode);
 
+    // ── Sending CW (#32) ──────────────────────────────────────────────
+    //
+    // These KEY THE TRANSMITTER. They are the only TX path in the app, and
+    // CwKeyer is meant to be their only caller, so the operator-facing rules
+    // (keyer enabled, CW mode, an explicit operator action) live there. This
+    // layer only guarantees that what goes on the wire is well formed and
+    // that nothing is queued: like tuning, a send while disconnected is
+    // dropped, never replayed on reconnect.
+
+    // Send `cw_macros:0,<text>;`. False when nothing was sent: not
+    // connected, or the text was refused by tciCwMacroCommand().
+    //
+    // ⚠ True means the command was written, not that the radio keyed.
+    // AetherSDR silently ignores cw_macros on a radio with no radio-side CW
+    // keyer; watch transmittingChanged() for evidence it actually went out.
+    bool sendCw(const QString& text);
+
+    // Send `cw_macros_stop;`. Deliberately NOT gated on connected() or on
+    // whether we think a send is in progress: the radio may still be
+    // draining its buffer after we believe it finished, and a stop that
+    // arrives when nothing is sending costs nothing. The only refusal is
+    // having no open socket to write to. False when nothing was written.
+    bool stopCw();
+
+    // Send `cw_macros_speed:<wpm>;`, clamped to kTciCwMinWpm..kTciCwMaxWpm.
+    // False when not connected. The radio's confirmation arrives as
+    // cwSpeedChanged(); until then cwSpeedWpm() still shows the old value.
+    //
+    // ⚠ The usable range is the RADIO's, and narrower on some backends:
+    // AetherSDR silently ignores a speed outside its backend's CW-text
+    // limits and sends no echo. No cwSpeedChanged() after a set means it
+    // was not accepted.
+    bool setCwSpeed(int wpm);
+
+    // Ask for the current macro speed (`cw_macros_speed;`, a GET). The answer
+    // arrives as cwSpeedChanged(). Needed because AetherSDR does not include
+    // the speed in its connect burst, so cwSpeedWpm() is 0 until something
+    // asks. Not sent automatically on connect: with the keyer off ShackBook
+    // sends no cw_ command of any kind. False when not connected.
+    bool requestCwSpeed();
+
+    // The macro speed the SERVER last reported (`cw_macros_speed:` echo or
+    // event), or 0 when unknown: never what we asked for, so a display built
+    // on it shows what the radio is really using.
+    int cwSpeedWpm() const { return m_cwSpeedWpm; }
+
 
 signals:
     void connectionChanged(bool connected);
@@ -133,6 +203,9 @@ signals:
     void transmittingChanged(bool transmitting);
     // Forward power (W) and SWR from a `tx_sensors:` reading on TRX 0.
     void txSensorsReceived(double forwardWatts, double swr);
+    // The server reported its CW macro speed (WPM); 0 when it became unknown
+    // because the connection dropped.
+    void cwSpeedChanged(int wpm);
     // Diagnostic — every line received, after stripping the trailing ';'.
     void rawMessageReceived(const QString& line);
 
@@ -165,6 +238,8 @@ private:
     QString m_protoVersion;
     QString m_device;
     QString m_lastError;
+
+    int            m_cwSpeedWpm{0};
 
     bool           m_transmitting{false};
     TxPowerTracker m_txPower;
