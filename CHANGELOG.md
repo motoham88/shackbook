@@ -8,6 +8,14 @@ are left unedited as the historical record. The format follows
 `vX.Y.Z` tag; CI then builds the Windows installer + zip, Linux AppImage, and
 macOS DMG and attaches them to the GitHub release.
 
+## [Unreleased]
+
+### Added
+- **Intel Mac build.** Releases now include `ShackBook-<version>-macos-x86_64.dmg`
+  alongside the Apple Silicon DMG. It runs on macOS 12 or later. It is built on the
+  same runner as the Apple Silicon DMG, and CI checks the binary really is Intel code
+  before packaging it.
+
 ## [0.7.0] - 2026-08-27
 
 ### Changed
