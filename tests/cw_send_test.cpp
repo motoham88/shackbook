@@ -185,9 +185,14 @@ void clientEndToEnd()
     check(tci.setCwSpeed(25), "setCwSpeed reports sent");
     tci.setCwSpeed(1);
     tci.setCwSpeed(200);
-    check(waitFor([&] { return server.received.count(QLatin1Char(';')) >= 3; }), "three speed commands arrive");
-    check(server.received == QStringLiteral("cw_macros_speed:25;cw_macros_speed:5;cw_macros_speed:60;"),
-          "speed sent as cw_macros_speed:<wpm>; and clamped to 5..60");
+    check(waitFor([&] { return server.received.count(QLatin1Char(';')) >= 4; }),
+          "three speed sets and a read-back arrive");
+    settle();
+    // ⭐ AetherSDR never sends a set's notification to the client that asked,
+    // so the client reads the speed back itself: once for a run of sets.
+    check(server.received == QStringLiteral(
+              "cw_macros_speed:25;cw_macros_speed:5;cw_macros_speed:60;cw_macros_speed;"),
+          "speed sent as cw_macros_speed:<wpm>;, clamped to 5..60, then one GET");
 
     // ── The server's word on speed, not ours ──────────────────────────
     check(tci.cwSpeedWpm() == 0, "asking for a speed does not change cwSpeedWpm()");

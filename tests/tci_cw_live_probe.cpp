@@ -62,8 +62,36 @@ bool isCwMode(const QString& m)
         || m == QLatin1String("CWU");
 }
 
-// Send `text`, then report how long until the radio keys and unkeys. With
-// stopAfterMs >= 0, send a stop that long after it keys, and time that.
+// How long trx must stay false before a message counts as finished. AetherSDR
+// on a FLEX with a short CWX break-in delay drops trx between characters, so
+// trx:0,false alone does not mean the message is over.
+constexpr int kHangMs = 700;
+
+// Wait until the radio has been out of transmit for kHangMs, counting the
+// keyed stretches on the way. Returns false on timeout.
+bool waitForMessageEnd(TciClient& tci, int timeoutMs, int& segments, qint64& lastUnkeyMs,
+                       const QElapsedTimer& since)
+{
+    bool wasTx = tci.transmitting();
+    QElapsedTimer quiet;
+    quiet.start();
+    QElapsedTimer t;
+    t.start();
+    while (t.elapsed() < timeoutMs) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+        const bool tx = tci.transmitting();
+        if (tx && !wasTx) ++segments;
+        if (!tx && wasTx) { quiet.restart(); lastUnkeyMs = since.elapsed(); }
+        if (tx) quiet.restart();
+        wasTx = tx;
+        if (!tx && quiet.elapsed() >= kHangMs) return true;
+    }
+    return false;
+}
+
+// Send `text`, then report how long until the radio keys, how many times it
+// keyed, and when it last unkeyed. With stopAfterMs >= 0, send a stop that
+// long after it first keys, and time from the stop.
 void timedSend(TciClient& tci, const QString& text, int stopAfterMs)
 {
     say("> cw_macros:0,%s;", text);
@@ -77,23 +105,28 @@ void timedSend(TciClient& tci, const QString& text, int stopAfterMs)
     }
     say("== keyed %s ms after the send", QString::number(t.elapsed()));
 
+    int segments = 1;
+    qint64 lastUnkey = -1;
     if (stopAfterMs >= 0) {
         pause(stopAfterMs);
         say("> cw_macros_stop;");
         QElapsedTimer s;
         s.start();
         tci.stopCw();
-        if (waitFor([&] { return !tci.transmitting(); }, 30000))
-            say("== unkeyed %s ms after the stop", QString::number(s.elapsed()));
+        segments = 0;
+        if (waitForMessageEnd(tci, 30000, segments, lastUnkey, s))
+            say("== %s", QStringLiteral("last unkey %1 ms after the stop; keyed %2 more time(s) after it")
+                             .arg(lastUnkey < 0 ? 0 : lastUnkey).arg(segments));
         else
-            say("!! still transmitting 30 s after the stop");
+            say("!! still keying 30 s after the stop");
         return;
     }
 
-    if (waitFor([&] { return !tci.transmitting(); }, 30000))
-        say("== unkeyed %s ms after the send", QString::number(t.elapsed()));
+    if (waitForMessageEnd(tci, 30000, segments, lastUnkey, t))
+        say("== %s", QStringLiteral("message over: last unkey %1 ms after the send, keyed %2 time(s)")
+                         .arg(lastUnkey).arg(segments));
     else
-        say("!! still transmitting 30 s after the send");
+        say("!! still keying 30 s after the send");
 }
 
 // Ask for `wpm`, report what the server echoed, if anything.

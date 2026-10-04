@@ -75,6 +75,8 @@ QString tciCwMacroCommand(const QString& text);
 // Lowest and highest speed setCwSpeed() will send, in WPM.
 inline constexpr int kTciCwMinWpm = 5;
 inline constexpr int kTciCwMaxWpm = 60;
+// How long after a speed set the client reads the speed back (ms).
+inline constexpr int kTciCwSpeedReadbackMs = 250;
 
 
 class TciClient : public QObject {
@@ -171,14 +173,22 @@ public:
     // having no open socket to write to. False when nothing was written.
     bool stopCw();
 
-    // Send `cw_macros_speed:<wpm>;`, clamped to kTciCwMinWpm..kTciCwMaxWpm.
-    // False when not connected. The radio's confirmation arrives as
-    // cwSpeedChanged(); until then cwSpeedWpm() still shows the old value.
+    // Send `cw_macros_speed:<wpm>;`, clamped to kTciCwMinWpm..kTciCwMaxWpm,
+    // then read the speed back with a GET shortly afterwards. False when not
+    // connected. The result arrives as cwSpeedChanged(); until then
+    // cwSpeedWpm() still shows the old value.
+    //
+    // The read-back is not optional. AetherSDR (v26.10.1) sends a set's
+    // notification only to the OTHER clients (TciServer, "broadcast to all
+    // other clients"), never to the one that asked, so without the GET the
+    // requester never learns the new speed. It is delayed because AetherSDR
+    // applies the set on a queued call: a GET in the same burst could read
+    // the old value. Several sets in a row share one read-back.
     //
     // ⚠ The usable range is the RADIO's, and narrower on some backends:
     // AetherSDR silently ignores a speed outside its backend's CW-text
-    // limits and sends no echo. No cwSpeedChanged() after a set means it
-    // was not accepted.
+    // limits. A read-back that still shows the old speed means the set was
+    // not accepted.
     bool setCwSpeed(int wpm);
 
     // Ask for the current macro speed (`cw_macros_speed;`, a GET). The answer
@@ -225,6 +235,7 @@ private:
 
     QWebSocket* m_socket{nullptr};
     QTimer*     m_reconnectTimer{nullptr};
+    QTimer*     m_cwSpeedReadback{nullptr};   // see setCwSpeed()
 
     QUrl    m_url;
     bool    m_userInitiatedDisconnect{false};

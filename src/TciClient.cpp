@@ -49,6 +49,13 @@ TciClient::TciClient(QObject* parent)
 
     connect(m_reconnectTimer, &QTimer::timeout,
             this, &TciClient::onReconnectTimeout);
+
+    m_cwSpeedReadback = new QTimer(this);
+    m_cwSpeedReadback->setSingleShot(true);
+    m_cwSpeedReadback->setInterval(kTciCwSpeedReadbackMs);
+    connect(m_cwSpeedReadback, &QTimer::timeout, this, [this]() {
+        if (m_connected) send(QStringLiteral("cw_macros_speed;"));
+    });
 }
 
 TciClient::~TciClient()
@@ -129,6 +136,8 @@ void TciClient::onDisconnected()
     // Readings from before the drop may belong to a different radio or a
     // long-gone transmission; never log them against a new contact.
     m_txPower.reset();
+    // A read-back owed to the old connection must not go out on the next.
+    m_cwSpeedReadback->stop();
     // The next server may run at a different speed; show "unknown" until it
     // says, rather than the old radio's number.
     if (m_cwSpeedWpm != 0) {
@@ -315,6 +324,7 @@ bool TciClient::setCwSpeed(int wpm)
     if (!m_connected) return false;
     const int clamped = qBound(kTciCwMinWpm, wpm, kTciCwMaxWpm);
     send(QStringLiteral("cw_macros_speed:%1;").arg(clamped));
+    m_cwSpeedReadback->start();   // restarts: a run of sets gets one GET
     return true;
 }
 
