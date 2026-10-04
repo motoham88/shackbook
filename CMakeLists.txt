@@ -463,6 +463,18 @@ if(SHACKBOOK_TESTS)
     target_include_directories(rigctld_live_probe PRIVATE src)
     target_link_libraries(rigctld_live_probe PRIVATE Qt6::Core Qt6::Network)
 
+    # Bench tool, not a test: times the CW keyer's TCI commands (#32) against
+    # a REAL TCI server. Read-only unless given --transmit. Not add_test'd.
+    add_executable(tci_cw_live_probe
+        tests/tci_cw_live_probe.cpp
+        src/TciClient.cpp
+        src/TciClient.h
+        src/TxPowerTracker.cpp
+        src/TxPowerTracker.h
+    )
+    target_include_directories(tci_cw_live_probe PRIVATE src)
+    target_link_libraries(tci_cw_live_probe PRIVATE Qt6::Core Qt6::Network Qt6::WebSockets)
+
     add_executable(radio_attribution_test
         tests/radio_attribution_test.cpp
         src/LogbookModel.cpp
