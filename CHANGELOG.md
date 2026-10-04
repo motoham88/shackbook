@@ -10,16 +10,51 @@ macOS DMG and attaches them to the GitHub release.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-04
+
 ### Added
+- **Double-click a spot to tune the radio to it** (`Tools → Show Spot Index…`). Deliberately
+  narrow: receiver 0 / VFO 0 only, no split, and the only commands it can send are frequency and
+  mode, so it can never key the transmitter. (#9, #10)
+- **FreeDV and RADE spots tune to a data sideband**, the way the radio carries them, instead of
+  being refused. `FREEDV`, `RADE`, `DIGITALVOICE` and `DV` are all recognised. (#12)
+- **Pick the rig, port and baud for a Hamlib radio** instead of composing a `rigctld` command
+  line: a searchable list of Hamlib's rigs, the serial ports actually present, and the baud
+  rate, with a ready-to-paste command. (#13)
+- **ShackBook starts `rigctld` itself when nothing is already serving**, and stops only a
+  `rigctld` it started, so no terminal has to stay open and no other program's `rigctld` is
+  killed. (#13)
+- **Log the power the radio measured.** With TCI, a new QSO takes the peak forward power of the
+  most recent transmission instead of the fixed default. Settings → Operator, on by default;
+  the default still applies when there is no measurement. (#23, #26)
+- **Shack status over MQTT for Home Assistant** (Settings → MQTT): online/offline, radio
+  connected, frequency, mode and band, transmitting (an on-air light), and today's QSO count,
+  published retained with Home Assistant discovery. The last QSO's details are published only
+  if you switch that on. (#24, #27)
 - **Intel Mac build.** Releases now include `ShackBook-<version>-macos-x86_64.dmg`
-  alongside the Apple Silicon DMG. It runs on macOS 12 or later. It is built on the
-  same runner as the Apple Silicon DMG, and CI checks the binary really is Intel code
-  before packaging it.
+  alongside the Apple Silicon DMG. It runs on macOS 12 or later. CI checks each DMG's
+  architecture and minimum macOS before packaging it. (#29)
 
 ### Changed
 - **The Apple Silicon DMG now runs on macOS 12 or later.** It previously required
   macOS 14 because no minimum was set, which shut out M1/M2 Macs still on Monterey
-  or Ventura. CI now checks both DMGs' minimum macOS before packaging.
+  or Ventura. (#30)
+- **The radio link is named by the source in use.** The header no longer says "TCI offline"
+  when the radio is followed through Hamlib `rigctld`. (#14)
+- **Unit tests now run in CI** on Linux and Windows for every push and pull request. (#22, #25)
+
+### Fixed
+- **Hamlib's own Windows installer is found.** It installs to a version-stamped folder
+  (`C:\Program Files\hamlib-w64-<version>\`) and doesn't add itself to PATH, so ShackBook
+  missed an ordinary install.
+- **Hamlib data and reverse modes are logged.** Modes such as `FM-D` or `USB-D` (an IC-9700
+  reporting `FM-D`, for example) used to produce a QSO with no MODE field at all. (#16)
+- **A spot carrying only a logger's phone bucket (`PH`) tunes the right sideband.** The radio
+  used to move frequency but stay in its old mode. (#17)
+- **Home Assistant shows frequency in MHz**, not as 10,000,000.000 Hz; the MQTT topic still
+  carries whole Hz. (#28)
+- **Source files store plain LF line endings**, ending MSVC's "Mac file format detected"
+  warning. (#19, #21)
 
 ## [0.7.0] - 2026-08-27
 
