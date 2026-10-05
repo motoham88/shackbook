@@ -74,6 +74,10 @@ void TciClient::connectToServer(const QString& host, quint16 port)
     if (m_socket->state() != QAbstractSocket::UnconnectedState) {
         m_socket->abort();
     }
+    // The abort above reports a drop, which schedules a reconnect. This IS
+    // the reconnect, so that timer must not survive to abort it a second
+    // later (and the next one, and the next: see onConnected).
+    cancelReconnect();
     m_socket->open(m_url);
 }
 
@@ -96,6 +100,11 @@ void TciClient::send(const QString& cmd)
 
 void TciClient::onConnected()
 {
+    // A reconnect still pending from before this connection would fire on a
+    // healthy link: onReconnectTimeout() aborts and reopens, the abort
+    // schedules another, and the link churns once a second for good. Seen
+    // in AetherSDR's log as a "TCP drop" every ~990 ms (#32 on-air tests).
+    cancelReconnect();
     m_reconnectAttempts = 0;
     setConnected(true);
     // TCI dialect varies between servers — sending `start;` is enough for
@@ -379,6 +388,10 @@ void TciClient::onReconnectTimeout()
     if (m_socket->state() != QAbstractSocket::UnconnectedState) {
         m_socket->abort();
     }
+    // The abort above reports a drop, which schedules a reconnect. This IS
+    // the reconnect, so that timer must not survive to abort it a second
+    // later (and the next one, and the next: see onConnected).
+    cancelReconnect();
     m_socket->open(m_url);
 }
 

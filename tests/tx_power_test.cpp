@@ -8,6 +8,7 @@
 //      asks for sensor readings on connect, parses AetherSDR's exact
 //      `tx_sensors:` shape (including its extra trailing field), and forgets
 //      readings when the connection drops.
+//   3. That a reconnect does not leave the link churning (linkStaysUp).
 
 #include "TciClient.h"
 #include "TxPowerTracker.h"
@@ -141,6 +142,7 @@ public:
                                         QWebSocketServer::NonSecureMode, this);
         m_ok = m_server->listen(QHostAddress::LocalHost, port);
         connect(m_server, &QWebSocketServer::newConnection, this, [this]() {
+            ++connections;
             m_sock = m_server->nextPendingConnection();
             connect(m_sock, &QWebSocket::textMessageReceived, this,
                     [this](const QString& msg) { received += msg; });
@@ -152,6 +154,7 @@ public:
     void dropClient() { if (m_sock) { m_sock->close(); m_sock = nullptr; } }
 
     QString received;
+    int     connections = 0;
 
 private:
     QWebSocketServer* m_server{nullptr};
@@ -204,6 +207,43 @@ void clientEndToEnd()
     tci.disconnectFromServer();
 }
 
+// ⭐ The link must stay up. Seen in AetherSDR's log during on-air tests:
+// ShackBook dropped and reopened its TCI connection once a second, for a
+// whole session. connectToServer() on a live socket aborts it, the abort
+// schedules a reconnect, the socket reopens at once, and the timer then
+// fires a second later and aborts the healthy connection, forever. Every
+// drop makes frequency, mode, TX state and MQTT status flap, and forgets
+// the measured TX power.
+void linkStaysUp()
+{
+    std::printf("\n-- reconnecting does not churn the link --\n");
+
+    constexpr quint16 kPort = 45832;
+    FakeTci server(kPort);
+    check(server.ok(), "fake TCI server bound to loopback");
+    if (!server.ok()) return;
+
+    TciClient tci;
+    int drops = 0;
+    QObject::connect(&tci, &TciClient::connectionChanged, [&](bool up) { if (!up) ++drops; });
+
+    tci.connectToServer(QStringLiteral("127.0.0.1"), kPort);
+    check(waitFor([&] { return tci.connected(); }), "client connects");
+
+    // Connect again while connected, as a Settings save or a source switch
+    // does. One replacement connection is expected; then it must hold.
+    tci.connectToServer(QStringLiteral("127.0.0.1"), kPort);
+    check(waitFor([&] { return tci.connected(); }), "and reconnects");
+    const int dropsAfterReconnect = drops;
+    const int connsAfterReconnect = server.connections;
+    waitFor([] { return false; }, 3500);   // past several 1 s backoff periods
+    check(tci.connected(), "still connected 3.5 s later");
+    check(drops == dropsAfterReconnect, "no further drops after the reconnect");
+    check(server.connections == connsAfterReconnect, "and no further connections to the server");
+
+    tci.disconnectFromServer();
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -212,6 +252,7 @@ int main(int argc, char** argv)
 
     trackerRules();
     clientEndToEnd();
+    linkStaysUp();
 
     if (failures == 0) {
         std::printf("\ntx_power_test: all checks passed\n");
