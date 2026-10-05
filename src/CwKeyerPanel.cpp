@@ -1,6 +1,7 @@
 #include "CwKeyerPanel.h"
 
 #include "CwKeyer.h"
+#include "TciClient.h"
 
 #include <QEvent>
 #include <QGridLayout>
@@ -8,6 +9,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QPushButton>
+#include <QTimer>
 #include <QVBoxLayout>
 
 namespace ShackBook {
@@ -49,8 +51,15 @@ CwKeyerPanel::CwKeyerPanel(CwKeyer* keyer, QWidget* parent)
     }
     m_slower->setToolTip(tr("1 WPM slower"));
     m_faster->setToolTip(tr("1 WPM faster"));
-    connect(m_slower, &QPushButton::clicked, this, [this] { if (m_speed > 0) m_keyer->setSpeed(m_speed - 1); });
-    connect(m_faster, &QPushButton::clicked, this, [this] { if (m_speed > 0) m_keyer->setSpeed(m_speed + 1); });
+    m_slower->setAccessibleName(tr("CW speed slower"));
+    m_faster->setAccessibleName(tr("CW speed faster"));
+    connect(m_slower, &QPushButton::clicked, this, [this] { stepSpeed(-1); });
+    connect(m_faster, &QPushButton::clicked, this, [this] { stepSpeed(+1); });
+    m_requestedReset = new QTimer(this);
+    m_requestedReset->setSingleShot(true);
+    // Well past the client's 250 ms read-back of a speed set.
+    m_requestedReset->setInterval(1500);
+    connect(m_requestedReset, &QTimer::timeout, this, [this] { m_requestedWpm = 0; });
     speedRow->addWidget(m_speedLabel);
     speedRow->addWidget(m_slower);
     speedRow->addWidget(m_faster);
@@ -71,10 +80,12 @@ CwKeyerPanel::CwKeyerPanel(CwKeyer* keyer, QWidget* parent)
     auto* statusRow = new QHBoxLayout;
     m_status = new QLabel;
     m_status->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_status->setWordWrap(true);   // a long message or reason, in a narrow dock
     m_stop = new QPushButton(tr("Esc  STOP"));
     m_stop->setFocusPolicy(Qt::NoFocus);
     m_stop->setStyleSheet(QString::fromLatin1(kStopStyle));
     m_stop->setToolTip(tr("Stop sending (Esc works anywhere in ShackBook)"));
+    m_stop->setAccessibleName(tr("Stop sending CW"));
     connect(m_stop, &QPushButton::clicked, this, &CwKeyerPanel::stopNow);
     statusRow->addWidget(m_status, 1);
     statusRow->addWidget(m_stop);
@@ -114,8 +125,33 @@ void CwKeyerPanel::stopNow()
         m_message = tr("Stopped");
         m_messageWarning = false;
     }
-    m_keyer->stop();
+    // A stop that could not be written is said out loud: the operator
+    // pressed Esc expecting the radio to stop.
+    if (!m_keyer->stop() && m_keyer->isEnabled()) {
+        showMessage(m_keyer->lastError(), true);
+        return;
+    }
     refresh();
+}
+
+void CwKeyerPanel::stepSpeed(int delta)
+{
+    const int base = m_requestedWpm > 0 ? m_requestedWpm : m_speed;
+    if (base <= 0) {
+        // Speed unknown: perhaps the radio never answered. Ask again rather
+        // than guess a number to step from.
+        if (m_keyer->requestSpeed()) {
+            m_askingSpeed = true;
+            showMessage(tr("Asking the radio for its speed…"), false);
+        }
+        return;
+    }
+    const int target = qBound(kTciCwMinWpm, base + delta, kTciCwMaxWpm);
+    if (target == base) return;
+    if (m_keyer->setSpeed(target)) {
+        m_requestedWpm = target;
+        m_requestedReset->start();
+    }
 }
 
 void CwKeyerPanel::refreshLabels()
@@ -131,6 +167,13 @@ void CwKeyerPanel::refreshLabels()
 
 void CwKeyerPanel::setRadioState(bool connected, const QString& mode, bool tciLink)
 {
+    // A message about the last link ("Stop not sent: no link") is stale once
+    // the link changes. Only then: this also runs on every mode change.
+    if (connected != m_connected) {
+        m_message.clear();
+        m_messageWarning = false;
+        m_askingSpeed = false;
+    }
     m_connected = connected;
     m_mode = mode;
     m_tciLink = tciLink;
@@ -140,6 +183,12 @@ void CwKeyerPanel::setRadioState(bool connected, const QString& mode, bool tciLi
 void CwKeyerPanel::setSpeed(int wpm)
 {
     m_speed = wpm;
+    m_requestedWpm = 0;
+    m_requestedReset->stop();
+    if (m_askingSpeed && wpm > 0) {
+        m_askingSpeed = false;
+        if (m_message == tr("Asking the radio for its speed…")) m_message.clear();
+    }
     refresh();
 }
 
@@ -158,8 +207,10 @@ void CwKeyerPanel::showMessage(const QString& text, bool warning)
 void CwKeyerPanel::refresh()
 {
     m_speedLabel->setText(m_speed > 0 ? tr("%1 wpm").arg(m_speed) : tr("— wpm"));
-    m_slower->setEnabled(m_speed > 0);
-    m_faster->setEnabled(m_speed > 0);
+    // Enabled with the speed unknown too: a click then asks the radio again.
+    const bool linkUp = m_connected && m_tciLink;
+    m_slower->setEnabled(linkUp);
+    m_faster->setEnabled(linkUp);
 
     // Why nothing can be sent, if anything stops it. The keyer checks the
     // same things itself; this is so the operator sees it BEFORE pressing.

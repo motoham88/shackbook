@@ -20,6 +20,7 @@
 
 class QLabel;
 class QPushButton;
+class QTimer;
 
 namespace ShackBook {
 
@@ -43,17 +44,21 @@ public:
     // What the radio link is doing, for the disabled-state reason.
     // `tciLink` is false when the log uses rigctld, which has no CW path yet.
     void setRadioState(bool connected, const QString& mode, bool tciLink);
-    // The radio's reported speed; 0 when unknown.
+    // The radio's reported speed; 0 when unknown. Also ends any run of −/+
+    // steps: the radio's answer is what the next step starts from.
     void setSpeed(int wpm);
 
     // For tests.
     QString statusText() const;
     QPushButton* macroButton(int index) const { return m_buttons.value(index); }
     QPushButton* stopButton() const { return m_stop; }
+    QPushButton* slowerButton() const { return m_slower; }
+    QPushButton* fasterButton() const { return m_faster; }
 
 private:
     void refresh();
     void showMessage(const QString& text, bool warning);
+    void stepSpeed(int delta);
 
     CwKeyer* m_keyer;
 
@@ -68,6 +73,13 @@ private:
     bool    m_tciLink{true};
     QString m_mode;
     int     m_speed{0};
+    // The last speed −/+ asked for, until the radio answers: quick clicks
+    // step from here rather than from a reported speed that has not caught
+    // up. Dropped by m_requestedReset if no answer comes (the radio may
+    // have refused the speed), so a refused step is not built on.
+    int     m_requestedWpm{0};
+    QTimer* m_requestedReset{};
+    bool    m_askingSpeed{false};   // "Asking the radio…" is on show
     QString m_message;        // the last result to show while Idle
     bool    m_messageWarning{false};
 };

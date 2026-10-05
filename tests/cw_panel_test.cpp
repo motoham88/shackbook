@@ -5,7 +5,8 @@
 //   2. The panel, headless (offscreen platform), against a recording fake
 //      sender: buttons blocked with a reason until the radio is connected
 //      and in CW, a click sends exactly the expanded message and shows it,
-//      STOP stops, a keyer that is off sends nothing.
+//      STOP stops (and says so when it could not), −/+ step the speed, a
+//      keyer that is off sends nothing.
 //   3. Esc through the application-wide filter stops once per key press,
 //      including when the press would go on to a dialog.
 
@@ -46,9 +47,10 @@ public:
     bool    cwConnected() const override { return connected; }
     QString cwMode() const override      { return mode; }
     bool    sendCwText(const QString& t) override { log << QStringLiteral("send:") + t; return true; }
-    bool    stopCwText() override        { log << QStringLiteral("stop"); return true; }
+    bool    stopCwText() override        { log << QStringLiteral("stop"); return socketOpen; }
     bool    setCwTextSpeed(int w) override { log << QStringLiteral("speed:%1").arg(w); return true; }
     int     cwTextSpeed() const override { return 24; }
+    bool    socketOpen = true;   // false: a stop has nowhere to go
     bool    requestCwTextSpeed() override { log << QStringLiteral("speed?"); return true; }
 };
 
@@ -159,6 +161,51 @@ void panel()
     p2.macroButton(4)->click();
     check(s.log.isEmpty() && p2.statusText() == QStringLiteral("Nothing in CALL"),
           "F5 with no call: nothing sent, 'Nothing in CALL' shown");
+
+    // ⭐ Esc with no link: the stop is not silently lost (#34 review).
+    s.socketOpen = false;
+    p.setRadioState(false, QString(), true);
+    s.log.clear();
+    p.stopNow();
+    check(s.log == QStringList{QStringLiteral("stop")}
+          && p.statusText() == QStringLiteral("Stop not sent: no link to the radio"),
+          "STOP with no link: tried, and says it was not sent");
+    s.socketOpen = true;
+    p.setRadioState(true, QStringLiteral("CW"), true);
+    check(p.statusText() == QStringLiteral("Ready"), "the no-link message clears once the link is back");
+
+    // Speed: −/+ step from what was last asked, so quick clicks add up
+    // rather than all asking for the reported speed ± 1 (#34 review).
+    s.log.clear();
+    p.setSpeed(24);
+    p.fasterButton()->click();
+    p.fasterButton()->click();
+    p.fasterButton()->click();
+    check(s.log == QStringList({QStringLiteral("speed:25"), QStringLiteral("speed:26"),
+                                QStringLiteral("speed:27")}),
+          "three quick + clicks ask for 25, 26, 27");
+    p.setSpeed(27);
+    s.log.clear();
+    p.slowerButton()->click();
+    check(s.log == QStringList{QStringLiteral("speed:26")}, "after the radio answers, steps start from its speed");
+    p.setSpeed(60);
+    s.log.clear();
+    p.fasterButton()->click();
+    check(s.log.isEmpty(), "no step past the client's 60 wpm ceiling");
+
+    // The speed never arrived: −/+ stay usable and ask for it again.
+    p.setSpeed(0);
+    s.log.clear();
+    check(p.fasterButton()->isEnabled(), "speed unknown: −/+ still enabled");
+    p.fasterButton()->click();
+    check(s.log == QStringList{QStringLiteral("speed?")}, "and a click asks the radio for its speed");
+    check(p.statusText().contains(QStringLiteral("Asking")), "saying so");
+    p.setSpeed(24);
+    check(p.statusText() == QStringLiteral("Ready"), "until the radio answers");
+
+    check(!p.slowerButton()->accessibleName().isEmpty() && !p.fasterButton()->accessibleName().isEmpty(),
+          "−/+ have accessible names for screen readers");
+    s.log.clear();
 
     // The keyer off: the panel cannot send anything, even when asked.
     k.setEnabled(false);
