@@ -338,7 +338,8 @@ void SettingsDialog::buildUI()
     cwL->addRow(cwNote);
     auto* tokens = new QLabel(
         "Tokens: {CALL} {MYCALL} {RST} {NR} {EXCH} {NAME}. A message whose token is "
-        "empty is not sent.");
+        "empty is not sent. {NR} (sent as three digits) and {EXCH} come from the "
+        "contest row, so they are filled only in contest mode.");
     tokens->setWordWrap(true);
     cwL->addRow(tokens);
     for (int i = 0; i < 8; ++i) {

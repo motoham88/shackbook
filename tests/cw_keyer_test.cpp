@@ -140,6 +140,41 @@ void text()
     checkEq(expand("CQ,CQ = + / . - ?"), QStringLiteral("CQ,CQ = + / . - ?"), "CW punctuation is kept");
     checkEq(expand("CQ\nTEST"), QStringLiteral("CQ TEST"), "a line break is a word gap");
 
+    // Serials go out as three digits, so 1 is sent as 001 (cut: TT1).
+    CwContext serial = station();
+    serial.nr = QStringLiteral("1");
+    checkEq(expand("{NR}", serial), QStringLiteral("TT1"), "NR 1 is padded to 001, cut to TT1");
+    serial.nr = QStringLiteral("12");
+    checkEq(expand("{NR}", serial), QStringLiteral("T12"), "NR 12 is padded to 012");
+    serial.nr = QStringLiteral("1234");
+    checkEq(expand("{NR}", serial), QStringLiteral("1234"), "a serial over three digits is left alone");
+    serial.nr = QStringLiteral("7");
+    checkEq(expand("{NR}", serial, noCut), QStringLiteral("007"), "padded with cut numbers off too");
+
+    // ⭐ Each token is sanitised before the empty check (#34 review): a call
+    // of only non-Morse characters is nothing, not a silent "TU".
+    CwContext junkCall = station();
+    junkCall.call = QStringLiteral("éé!");
+    checkEq(expand("TU {CALL}", junkCall), QStringLiteral("ERROR: Nothing in CALL"),
+            "a call with nothing sendable refuses the message");
+    junkCall.call = QStringLiteral("g0jkn!");
+    const CwExpansion jx = cwExpandMacro(QStringLiteral("TU {CALL}é"), junkCall, {});
+    checkEq(jx.text, QStringLiteral("TU G0JKN"), "a token's non-Morse characters are dropped");
+    checkEq(jx.dropped, QStringLiteral("!É"), "and reported with the message's own");
+
+    // ⭐ Outside contest mode {NR} and {EXCH} are empty, and the refusal
+    // says why: the contest row they come from is hidden.
+    CwContext notContest = station();
+    notContest.contest = false;
+    notContest.nr.clear();
+    notContest.exch.clear();
+    checkEq(expand("{RST} {EXCH}", notContest),
+            QStringLiteral("ERROR: Nothing in EXCH: it is filled only in contest mode"),
+            "F2 outside contest mode is refused with the reason");
+    notContest.contest = true;
+    checkEq(expand("{RST} {EXCH}", notContest), QStringLiteral("ERROR: Nothing in EXCH"),
+            "in contest mode an empty exchange is just empty");
+
     check(isCwMode(QStringLiteral("CW")) && isCwMode(QStringLiteral("CWR"))
        && isCwMode(QStringLiteral("cwl")) && isCwMode(QStringLiteral("CWU")),
           "CW, CWR (AetherSDR), CWL/CWU (ExpertSDR and others) are CW modes");

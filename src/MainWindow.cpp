@@ -514,8 +514,11 @@ CwContext MainWindow::cwContext() const
     if (m_callEdit)      c.call   = m_callEdit->text();
     if (m_model)         c.myCall = m_model->myCall();
     if (m_rstSentEdit)   c.rst    = m_rstSentEdit->text();
-    if (m_stxEdit)       c.nr     = m_stxEdit->text();
-    if (m_stxStringEdit) c.exch   = m_stxStringEdit->text();
+    // The serial and exchange live in the contest row, hidden outside
+    // contest mode: what is left in it then must not go out on F2.
+    c.contest = m_model && m_model->contestMode();
+    if (c.contest && m_stxEdit)       c.nr   = m_stxEdit->text();
+    if (c.contest && m_stxStringEdit) c.exch = m_stxStringEdit->text();
     if (m_model)         c.name   = m_model->settingValue(QStringLiteral("CW_NAME"));
     return c;
 }

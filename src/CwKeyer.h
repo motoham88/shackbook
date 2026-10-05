@@ -47,9 +47,13 @@ struct CwContext {
     QString call;    // {CALL}   the station being worked
     QString myCall;  // {MYCALL}
     QString rst;     // {RST}    empty means 599
-    QString nr;      // {NR}     sent serial
+    QString nr;      // {NR}     sent serial; padded to three digits (1 -> 001)
     QString exch;    // {EXCH}   sent exchange, already resolved by the caller
     QString name;    // {NAME}   operator name
+    // {NR} and {EXCH} come from the contest row, so outside contest mode the
+    // caller leaves them empty and a message using them is refused with
+    // that reason rather than a bare "Nothing in EXCH".
+    bool    contest = true;
 };
 
 struct CwCutOptions {
@@ -72,8 +76,9 @@ CwSanitized cwSanitize(const QString& s);
 
 // Expand tokens, apply cut numbers, sanitise. On failure `error` says why in
 // words for the operator, and `text` must not be sent: an unknown token
-// ("Unknown token {FOO}"), a token with nothing behind it ("Nothing in
-// CALL"), or a message that comes out empty.
+// ("Unknown token {FOO}"), a token with nothing sendable behind it ("Nothing
+// in CALL", checked after sanitising, so a call of only non-Morse characters
+// counts as nothing), or a message that comes out empty.
 struct CwExpansion {
     QString text;
     QString error;

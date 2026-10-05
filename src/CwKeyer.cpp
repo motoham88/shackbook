@@ -3,6 +3,7 @@
 #include "CwSender.h"
 
 #include <QLoggingCategory>
+#include <QRegularExpression>
 #include <QTimer>
 
 #include <algorithm>
@@ -133,36 +134,56 @@ CwExpansion cwExpandMacro(const QString& macro, const CwContext& ctx,
 
         // An unknown token is refused, not passed through: sanitising would
         // strip the braces and key the token's NAME on the air.
-        QString value;
-        if      (name == QLatin1String("CALL"))   value = ctx.call.trimmed();
-        else if (name == QLatin1String("MYCALL")) value = ctx.myCall.trimmed();
-        else if (name == QLatin1String("RST")) {
-            value = ctx.rst.trimmed();
-            if (value.isEmpty()) value = QStringLiteral("599");
-            if (cut.cutRst) value = cwCutNumbers(value, cut.cutOne);
-        }
-        else if (name == QLatin1String("NR")) {
-            value = ctx.nr.trimmed();
-            if (cut.cutNr) value = cwCutNumbers(value, cut.cutOne);
-        }
-        else if (name == QLatin1String("EXCH"))   value = ctx.exch.trimmed();
-        else if (name == QLatin1String("NAME"))   value = ctx.name.trimmed();
-        else {
+        const bool known = name == QLatin1String("CALL") || name == QLatin1String("MYCALL")
+                        || name == QLatin1String("RST")  || name == QLatin1String("NR")
+                        || name == QLatin1String("EXCH") || name == QLatin1String("NAME");
+        if (!known) {
             r.error = QStringLiteral("Unknown token {%1}").arg(name);
             return r;
+        }
+
+        QString value;
+        if      (name == QLatin1String("CALL"))   value = ctx.call;
+        else if (name == QLatin1String("MYCALL")) value = ctx.myCall;
+        else if (name == QLatin1String("RST"))    value = ctx.rst;
+        else if (name == QLatin1String("NR"))     value = ctx.nr;
+        else if (name == QLatin1String("EXCH"))   value = ctx.exch;
+        else                                      value = ctx.name;
+
+        // Sanitised before the emptiness check, so a value of only non-Morse
+        // characters counts as empty rather than vanishing from the message.
+        const CwSanitized v = cwSanitize(value);
+        value = v.text;
+        for (const QChar d : v.dropped)
+            if (!r.dropped.contains(d)) r.dropped += d;
+
+        if (name == QLatin1String("RST")) {
+            if (value.isEmpty()) value = QStringLiteral("599");
+            if (cut.cutRst) value = cwCutNumbers(value, cut.cutOne);
+        } else if (name == QLatin1String("NR")) {
+            // Serials go out as three digits, as contest loggers send them:
+            // 1 -> 001, which cut numbers then make TT1.
+            static const QRegularExpression kDigits(QStringLiteral("^[0-9]{1,2}$"));
+            if (kDigits.match(value).hasMatch())
+                value = value.rightJustified(3, u'0');
+            if (cut.cutNr) value = cwCutNumbers(value, cut.cutOne);
         }
 
         // A token with nothing behind it is refused: "TU {CALL}" with no call
         // entered would otherwise send a bare "TU" to nobody in particular.
         if (value.isEmpty()) {
-            r.error = QStringLiteral("Nothing in %1").arg(name);
+            const bool contestOnly = name == QLatin1String("NR") || name == QLatin1String("EXCH");
+            r.error = contestOnly && !ctx.contest
+                ? QStringLiteral("Nothing in %1: it is filled only in contest mode").arg(name)
+                : QStringLiteral("Nothing in %1").arg(name);
             return r;
         }
         raw += value;
     }
 
     const CwSanitized clean = cwSanitize(raw);
-    r.dropped = clean.dropped;
+    for (const QChar d : clean.dropped)
+        if (!r.dropped.contains(d)) r.dropped += d;
     if (clean.text.isEmpty()) {
         r.error = QStringLiteral("The message is empty");
         return r;
