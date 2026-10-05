@@ -87,8 +87,8 @@ CwExpansion cwExpandMacro(const QString& macro, const CwContext& ctx,
 bool isCwMode(const QString& mode);
 
 // How long the radio must stay in receive before a message counts as over.
-// Ten dot lengths — longer than a word space (seven) — because some radio
-// setups drop transmit between characters and words mid-message (seen on a
+// Ten dot lengths — longer than a word space (seven) — because transmit can
+// drop briefly mid-message (seen between characters, under 200 ms, on a
 // FLEX-6500 via AetherSDR). Never under 400 ms. Unknown speed (0) is read
 // as 20 WPM.
 int cwHangMs(int wpm);
@@ -98,11 +98,11 @@ int cwHangMs(int wpm);
 // one unit is 1200 / WPM ms). Characters without Morse count as nothing.
 // Unknown speed (0) is read as 20 WPM.
 //
-// Why the keyer needs it: on a FLEX via AetherSDR, trx was seen dropping
-// between words for longer than any sensible hang, so "the radio has been in
-// receive a while" alone ended messages early. A keyer that wrongly thinks a
-// message is over sends no stop on replace, disable or disconnect, and the
-// radio keeps sending what it holds.
+// Why the keyer needs it: a quiet trx alone cannot tell a gap from the end of
+// a message, and a keyer that wrongly thinks a message is over sends no stop
+// on replace, disable or disconnect, so the radio keeps sending what it
+// holds. Requiring the Morse estimate to have run out as well means no gap,
+// however long, can end a message early.
 int cwDurationMs(const QString& text, int wpm);
 
 
