@@ -952,7 +952,9 @@ void SettingsDialog::onAccept()
         cw.cut.cutNr  = m_cwCutNr->isChecked();
         cw.cut.cutOne = m_cwCutOne->isChecked();
         cw.name = m_cwName->text();
-        saveCwKeyerConfig(cw, [this](const QString& k, const QString& v) { m_model->setSetting(k, v); });
+        saveCwKeyerConfig(cw,
+            [this](const QString& k, const QString& d) { return m_model->settingValue(k, d); },
+            [this](const QString& k, const QString& v) { m_model->setSetting(k, v); });
     }
 
     accept();

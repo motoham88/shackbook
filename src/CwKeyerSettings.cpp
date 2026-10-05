@@ -16,16 +16,12 @@ CwKeyerConfig loadCwKeyerConfig(const CwSettingGetter& get)
     // value is off, because off is the safe reading of anything unclear.
     cfg.enabled = get(QStringLiteral("CW_KEYER_ENABLED"), QStringLiteral("0")) == QLatin1String("1");
 
+    // Each key falls back to its own default only when absent: a text the
+    // operator cleared is stored as empty, and stays that way.
     for (int i = 0; i < cfg.macros.size(); ++i) {
         CwMacro& m = cfg.macros[i];
-        const QString label = get(key("CW_F%1_LABEL", i + 1), QString()).trimmed();
-        const QString text  = get(key("CW_F%1_TEXT",  i + 1), QString()).trimmed();
-        if (!text.isEmpty()) {
-            m.text  = text;
-            m.label = label;   // a custom message with no label shows just "F<n>"
-        } else if (!label.isEmpty()) {
-            m.label = label;
-        }
+        m.label = get(key("CW_F%1_LABEL", i + 1), m.label).trimmed();
+        m.text  = get(key("CW_F%1_TEXT",  i + 1), m.text).trimmed();
     }
 
     cfg.cut.cutRst = get(QStringLiteral("CW_CUT_RST"), QStringLiteral("1")) == QLatin1String("1");
@@ -35,17 +31,22 @@ CwKeyerConfig loadCwKeyerConfig(const CwSettingGetter& get)
     return cfg;
 }
 
-void saveCwKeyerConfig(const CwKeyerConfig& cfg, const CwSettingSetter& set)
+void saveCwKeyerConfig(const CwKeyerConfig& cfg, const CwSettingGetter& get,
+                       const CwSettingSetter& set)
 {
-    set(QStringLiteral("CW_KEYER_ENABLED"), onOff(cfg.enabled));
-    for (int i = 0; i < cfg.macros.size(); ++i) {
-        set(key("CW_F%1_LABEL", i + 1), cfg.macros[i].label.trimmed());
-        set(key("CW_F%1_TEXT",  i + 1), cfg.macros[i].text.trimmed());
+    const CwKeyerConfig now = loadCwKeyerConfig(get);
+    auto put = [&](const QString& k, const QString& v, const QString& was) {
+        if (v != was) set(k, v);
+    };
+    put(QStringLiteral("CW_KEYER_ENABLED"), onOff(cfg.enabled), onOff(now.enabled));
+    for (int i = 0; i < cfg.macros.size() && i < now.macros.size(); ++i) {
+        put(key("CW_F%1_LABEL", i + 1), cfg.macros[i].label.trimmed(), now.macros[i].label);
+        put(key("CW_F%1_TEXT",  i + 1), cfg.macros[i].text.trimmed(),  now.macros[i].text);
     }
-    set(QStringLiteral("CW_CUT_RST"), onOff(cfg.cut.cutRst));
-    set(QStringLiteral("CW_CUT_NR"),  onOff(cfg.cut.cutNr));
-    set(QStringLiteral("CW_CUT_ONE"), onOff(cfg.cut.cutOne));
-    set(QStringLiteral("CW_NAME"),    cfg.name.trimmed());
+    put(QStringLiteral("CW_CUT_RST"), onOff(cfg.cut.cutRst), onOff(now.cut.cutRst));
+    put(QStringLiteral("CW_CUT_NR"),  onOff(cfg.cut.cutNr),  onOff(now.cut.cutNr));
+    put(QStringLiteral("CW_CUT_ONE"), onOff(cfg.cut.cutOne), onOff(now.cut.cutOne));
+    put(QStringLiteral("CW_NAME"),    cfg.name.trimmed(),    now.name);
 }
 
 } // namespace ShackBook

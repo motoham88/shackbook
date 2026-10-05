@@ -1,7 +1,8 @@
 // cw_panel_test — the CW keyer's settings and panel (#32).
 //
 //   1. Settings: off unless explicitly "1", defaults for anything missing,
-//      and a save/load round trip.
+//      a cleared message stays cleared, a save/load round trip, and a save
+//      writes only what changed.
 //   2. The panel, headless (offscreen platform), against a recording fake
 //      sender: buttons blocked with a reason until the radio is connected
 //      and in CW, a click sends exactly the expanded message and shows it,
@@ -92,7 +93,7 @@ void settings()
     cfg.cut.cutOne = true;
     cfg.name = QStringLiteral("TONY");
     store.clear();
-    saveCwKeyerConfig(cfg, set);
+    saveCwKeyerConfig(cfg, get, set);
     const CwKeyerConfig back = loadCwKeyerConfig(get);
     check(back.enabled, "enabled round-trips");
     check(back.macros[0].label == QStringLiteral("Run") && back.macros[0].text == QStringLiteral("CQ CWT {MYCALL}"),
@@ -102,9 +103,28 @@ void settings()
     check(back.macros[2].text == QStringLiteral("TU {MYCALL}"), "untouched messages keep their defaults");
     check(back.cut.cutOne && back.name == QStringLiteral("TONY"), "cut options and name round-trip");
 
-    store.insert(QStringLiteral("CW_F3_TEXT"), QString());
-    check(loadCwKeyerConfig(get).macros[2].text == QStringLiteral("TU {MYCALL}"),
-          "a cleared message falls back to its default, not an empty button");
+    // ⭐ A message the operator cleared stays cleared (#34 review): it used
+    // to come back as its default, which then went out on the F-key.
+    CwKeyerConfig cleared = back;
+    cleared.macros[2].text.clear();
+    saveCwKeyerConfig(cleared, get, set);
+    check(store.contains(QStringLiteral("CW_F3_TEXT")) && store.value(QStringLiteral("CW_F3_TEXT")).isEmpty(),
+          "clearing a message stores it as empty");
+    check(loadCwKeyerConfig(get).macros[2].text.isEmpty(), "and it loads as empty, not as its default");
+
+    // ⭐ OK with nothing changed writes nothing (#34 review).
+    store.clear();
+    int writes = 0;
+    auto counting = [&](const QString& k, const QString& v) { ++writes; store.insert(k, v); };
+    saveCwKeyerConfig(loadCwKeyerConfig(get), get, counting);
+    check(writes == 0, "saving an untouched config on a fresh log writes no keys");
+    CwKeyerConfig one = loadCwKeyerConfig(get);
+    one.macros[0].text = QStringLiteral("CQ CQ {MYCALL}");
+    saveCwKeyerConfig(one, get, counting);
+    check(writes == 1 && store.size() == 1 && store.contains(QStringLiteral("CW_F1_TEXT")),
+          "changing one message writes only that key");
+    saveCwKeyerConfig(one, get, counting);
+    check(writes == 1, "and saving it again writes nothing more");
 }
 
 void panel()
@@ -206,6 +226,15 @@ void panel()
     check(!p.slowerButton()->accessibleName().isEmpty() && !p.fasterButton()->accessibleName().isEmpty(),
           "−/+ have accessible names for screen readers");
     s.log.clear();
+
+    // A cleared message: refused, naming the key and where to fix it.
+    QVector<CwMacro> macros = k.macros();
+    macros[5].text.clear();
+    k.setMacros(macros);
+    s.log.clear();
+    p.trigger(5);
+    check(s.log.isEmpty() && p.statusText() == QStringLiteral("F6 has no message (Settings → CW keyer)"),
+          "a cleared F6: nothing sent, the operator told which key");
 
     // The keyer off: the panel cannot send anything, even when asked.
     k.setEnabled(false);

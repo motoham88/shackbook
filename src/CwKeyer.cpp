@@ -303,6 +303,13 @@ CwKeyer::Result CwKeyer::sendMacro(int index)
         return Result::NotCwMode;
     }
 
+    // A message cleared in Settings: name the key, since an empty-message
+    // refusal alone would not say which one or where to fix it.
+    if (m_macros.at(index).text.trimmed().isEmpty()) {
+        m_lastError = QStringLiteral("F%1 has no message (Settings → CW keyer)").arg(index + 1);
+        return Result::BadMacro;
+    }
+
     const CwExpansion x = cwExpandMacro(m_macros.at(index).text,
                                         m_context ? m_context() : CwContext{},
                                         m_cut);
