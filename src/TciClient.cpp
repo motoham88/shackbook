@@ -325,9 +325,11 @@ bool TciClient::stopCw()
     if (!m_socket || m_socket->state() != QAbstractSocket::ConnectedState)
         return false;
     send(QStringLiteral("cw_macros_stop;"));
-    // Out to the OS now, not on the next event-loop turn: a stop is often
-    // followed at once by tearing the link down (disconnect, quit), and one
-    // left in the buffer leaves the radio sending what it already holds.
+    // Out of our buffer and into the OS now, not on the next event-loop
+    // turn. That is all flush() does: it does not make the server act on
+    // the stop before it sees the link close, and AetherSDR v26.10.1 does
+    // not (aethersdr/AetherSDR#6187). The real fix for a stop followed by
+    // a disconnect is holding the link: MainWindow::stopCwBeforeLinkGoes().
     m_socket->flush();
     return true;
 }

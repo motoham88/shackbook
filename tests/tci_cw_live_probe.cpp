@@ -22,8 +22,11 @@
 //
 // ⚠ --transmit PUTS A CARRIER ON THE AIR, on whatever frequency the radio is
 // on. It refuses unless the radio reports a CW mode, and counts down five
-// seconds first; Ctrl-C stops it. Use a dummy load or low power on a clear
-// frequency. The radio's speed is put back at the end.
+// seconds first. Ctrl-C sends cw_macros_stop, holds the link 300 ms so the
+// stop is not lost to the disconnect (see stopCwBeforeLinkGoes in
+// MainWindow), then exits; a second Ctrl-C, or killing the probe, sends no
+// stop and the radio finishes what it holds. Use a dummy load or low power
+// on a clear frequency. The radio's speed is put back at the end.
 
 #include "TciClient.h"
 
@@ -31,7 +34,9 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 
+#include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 
 using namespace ShackBook;
@@ -48,12 +53,40 @@ void say(const char* fmt, const QString& s = {})
     std::fflush(stdout);
 }
 
+// Ctrl-C: the handler only sets a flag; waitFor(), which every wait in the
+// probe goes through, sees it and stops the radio from the event loop.
+volatile std::sig_atomic_t g_interrupted = 0;
+TciClient* g_tci = nullptr;
+
+void onSigint(int)
+{
+    g_interrupted = 1;
+    std::signal(SIGINT, SIG_DFL);   // a second Ctrl-C kills at once
+}
+
+void stopAndExit()
+{
+    if (g_tci && g_tci->stopCw()) {
+        say("^C cw_macros_stop; sent, holding the link 300 ms");
+        QElapsedTimer t;
+        t.start();
+        while (t.elapsed() < 300)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+        g_tci->disconnectFromServer();
+    } else {
+        say("^C no link: no stop sent");
+    }
+    std::exit(130);
+}
+
 bool waitFor(const std::function<bool()>& done, int ms)
 {
     QElapsedTimer t;
     t.start();
-    while (!done() && t.elapsed() < ms)
+    while (!done() && t.elapsed() < ms) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+        if (g_interrupted) stopAndExit();
+    }
     return done();
 }
 
@@ -253,6 +286,8 @@ int main(int argc, char** argv)
     const bool transmit  = stopTests || (argc > 3 && QByteArray(argv[3]) == "--transmit");
 
     TciClient tci;
+    g_tci = &tci;
+    std::signal(SIGINT, onSigint);
     // The stop tests print only the observer's trx and the results.
     if (!stopTests) {
         QObject::connect(&tci, &TciClient::rawMessageReceived, [](const QString& l) {

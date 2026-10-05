@@ -171,8 +171,11 @@ public:
     // draining its buffer after we believe it finished, and a stop that
     // arrives when nothing is sending costs nothing. The only refusal is
     // having no open socket to write to. False when nothing was written.
-    // Flushed to the socket before returning, so a disconnect straight
-    // after cannot strand it in the buffer.
+    // Flushed to the OS before returning, so a disconnect straight after
+    // cannot strand it in the client's buffer. That does not mean the server
+    // acts on it: AetherSDR drops a stop followed at once by a close
+    // (aethersdr/AetherSDR#6187), so a caller about to disconnect must hold
+    // the link until the radio unkeys (MainWindow::stopCwBeforeLinkGoes).
     bool stopCw();
 
     // Send `cw_macros_speed:<wpm>;`, clamped to kTciCwMinWpm..kTciCwMaxWpm,

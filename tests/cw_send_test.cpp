@@ -228,14 +228,16 @@ void clientEndToEnd()
     check(!server.received.contains(QStringLiteral("cw_")),
           "nothing refused while down is replayed on reconnect");
 
-    // ⭐ A stop immediately followed by a disconnect — Settings saved, or the
-    // app closed, mid-message — still reaches the server. After the link
-    // goes, the radio keeps sending whatever it holds.
+    // A stop immediately followed by a disconnect still leaves the client:
+    // flush() puts it on the wire before the close. That is all this pins.
+    // Whether the server acts on it is another matter (AetherSDR does not,
+    // aethersdr/AetherSDR#6187), which is why MainWindow holds the link
+    // until the radio unkeys; this fake cannot show that.
     server.received.clear();
     check(tci.stopCw(), "stopCw just before a disconnect reports sent");
     tci.disconnectFromServer();
     check(waitFor([&] { return server.received.contains(QStringLiteral("cw_macros_stop;")); }),
-          "and the stop reaches the server despite the disconnect");
+          "and the stop's bytes reach the server ahead of the close");
 }
 
 // Connect order and a forgotten mode (#34 review).
