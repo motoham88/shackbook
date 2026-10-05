@@ -36,6 +36,9 @@ set(SHACKBOOK_SOURCES
     src/MainWindow.h
     src/TciClient.cpp
     src/TciClient.h
+    src/CwSender.h
+    src/CwKeyer.cpp
+    src/CwKeyer.h
     src/TxPowerTracker.cpp
     src/TxPowerTracker.h
     src/MqttPacket.cpp
@@ -333,6 +336,22 @@ if(SHACKBOOK_TESTS)
     target_include_directories(cw_send_test PRIVATE src)
     target_link_libraries(cw_send_test PRIVATE Qt6::Core Qt6::Network Qt6::WebSockets)
     add_test(NAME cw_send_test COMMAND cw_send_test)
+
+    # CW keyer (#32): macro expansion, the transmit-safety gates, and the
+    # send/stop state machine against a recording fake sender.
+    add_executable(cw_keyer_test
+        tests/cw_keyer_test.cpp
+        src/CwKeyer.cpp
+        src/CwKeyer.h
+        src/CwSender.h
+        src/TciClient.cpp
+        src/TciClient.h
+        src/TxPowerTracker.cpp
+        src/TxPowerTracker.h
+    )
+    target_include_directories(cw_keyer_test PRIVATE src)
+    target_link_libraries(cw_keyer_test PRIVATE Qt6::Core Qt6::Network Qt6::WebSockets)
+    add_test(NAME cw_keyer_test COMMAND cw_keyer_test)
 
     # MQTT shack status (#24): packet bytes, HA discovery, and the publisher
     # against a loopback fake broker.
