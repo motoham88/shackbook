@@ -1771,6 +1771,11 @@ void MainWindow::onTciFrequencyChanged(double mhz)
 
 void MainWindow::onTciModeChanged(const QString& mode)
 {
+    // TciClient reports "" when the link drops, so the CW keyer's mode gate
+    // closes. For logging, the last mode the radio reported stays the best
+    // guess: an empty one would log QSOs with no mode and flip a 599 RST to
+    // 59 on every reconnect.
+    if (mode.isEmpty()) return;
     m_rawTciMode = mode;
     QString adifMode, adifSub;
     LogbookModel::adifModeFromTciMode(mode, &adifMode, &adifSub);

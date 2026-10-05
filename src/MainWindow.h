@@ -206,7 +206,7 @@ private:
     QString m_curBand;
     QString m_curMode;       // ADIF base mode
     QString m_curSubmode;    // ADIF submode (USB/LSB)
-    QString m_rawTciMode;    // for display only
+    QString m_rawTciMode;    // for display only; the last mode reported, kept across a drop
 
     // Last call we auto-filled — used to decide whether the call field
     // is "ours" (safe to overwrite on the next spot click) or the

@@ -126,8 +126,9 @@ void CwKeyerPanel::stopNow()
         m_messageWarning = false;
     }
     // A stop that could not be written is said out loud: the operator
-    // pressed Esc expecting the radio to stop.
-    if (!m_keyer->stop() && m_keyer->isEnabled()) {
+    // pressed Esc expecting the radio to stop. Not on a rigctld log, where
+    // "needs a TCI radio link" already says why and would be buried.
+    if (!m_keyer->stop() && m_keyer->isEnabled() && m_tciLink) {
         showMessage(m_keyer->lastError(), true);
         return;
     }
