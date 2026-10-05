@@ -248,7 +248,7 @@ void CwKeyer::setEnabled(bool on)
     // Turning the keyer off must not leave a message keying: the one stop
     // sent while disabling, and the last thing this class sends until it is
     // enabled again.
-    if (!on && m_state != State::Idle && m_sender)
+    if (!on && radioMayBeSending() && m_sender)
         m_sender->stopCwText();
     m_enabled = on;
     if (!on) { finish(); return; }
@@ -293,7 +293,7 @@ CwKeyer::Result CwKeyer::sendMacro(int index)
     // Replace a message in progress rather than appending to it.
     qCDebug(lcCw) << "sendMacro F" << index + 1 << "state" << stateName(m_state)
                   << "transmitting" << m_transmitting << "keyed" << m_keyed;
-    if (m_state != State::Idle) {
+    if (radioMayBeSending()) {
         const bool ok = m_sender->stopCwText();
         qCDebug(lcCw) << "  replace: stop written" << ok;
     }
@@ -329,30 +329,38 @@ CwKeyer::Result CwKeyer::sendMacro(int index)
     return Result::Sent;
 }
 
-void CwKeyer::stop()
+bool CwKeyer::stop()
 {
-    if (!m_enabled || !m_sender) return;
+    if (!m_enabled || !m_sender) return false;
     // Always sent (rule 3): the radio may be draining a buffer we think is
     // empty, and a stop that arrives when nothing is sending costs nothing.
     const bool ok = m_sender->stopCwText();
     qCDebug(lcCw) << "stop: state" << stateName(m_state) << "transmitting" << m_transmitting
                   << "written" << ok;
+    if (!ok) m_lastError = QStringLiteral("Stop not sent: no link to the radio");
 
     m_noKeyTimer->stop();
     m_hangTimer->stop();
-    if (m_state == State::Idle) return;
+    if (m_state == State::Idle) return ok;
     if (m_transmitting) {
         m_stopTimer->start();
         setState(State::Stopping);
     } else {
         finish();
     }
+    return ok;
 }
 
 bool CwKeyer::setSpeed(int wpm)
 {
     if (!m_enabled || !m_sender) return false;
     return m_sender->setCwTextSpeed(wpm);
+}
+
+bool CwKeyer::requestSpeed()
+{
+    if (!m_enabled || !m_sender) return false;
+    return m_sender->requestCwTextSpeed();
 }
 
 void CwKeyer::onTransmittingChanged(bool transmitting)

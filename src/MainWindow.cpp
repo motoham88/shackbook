@@ -421,7 +421,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
 
 void MainWindow::stopCwBeforeLinkGoes()
 {
-    if (!m_cwKeyer || m_cwKeyer->state() == CwKeyer::State::Idle) return;
+    if (!m_cwKeyer || !m_cwKeyer->radioMayBeSending()) return;
     const bool wasTransmitting = m_tci->transmitting();
     m_cwPanel->stopNow();
 
@@ -443,7 +443,7 @@ void MainWindow::stopCwBeforeLinkGoes()
 MainWindow::~MainWindow()
 {
     // Closing ShackBook mid-message must not leave the radio keying: turning
-    // the keyer off sends a stop if, and only if, a message is in progress.
+    // the keyer off sends a stop if, and only if, the radio may be sending.
     // The TCI client is still alive here; children are deleted after this.
     if (m_cwKeyer) m_cwKeyer->setEnabled(false);
 }

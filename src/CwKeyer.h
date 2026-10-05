@@ -7,8 +7,8 @@
 //
 //   1. Off by default. While disabled, nothing here reaches the sender: no
 //      send, no stop, no speed, not even a speed query. The one exception is
-//      the moment of disabling mid-message, which sends a stop: turning the
-//      keyer off must not leave a message keying.
+//      the moment of disabling while the radio may still be sending, which
+//      sends a stop: turning the keyer off must not leave a message keying.
 //   2. Only an explicit operator action sends: sendMacro() is called from a
 //      button click or an F-key, never on QSO save, spot click, connect or a
 //      timer. Nothing in this class sends on its own.
@@ -132,8 +132,9 @@ public:
     CwKeyer(ICwSender* sender, ContextProvider context, QObject* parent = nullptr);
     ~CwKeyer() override;
 
-    // Off by default. Disabling mid-message sends a stop (rule 1). Enabling
-    // asks the radio for its speed, which the hang and the panel need.
+    // Off by default. Disabling while radioMayBeSending() sends a stop
+    // (rule 1). Enabling asks the radio for its speed, which the hang and the
+    // panel need.
     void setEnabled(bool on);
     bool isEnabled() const { return m_enabled; }
 
@@ -141,17 +142,32 @@ public:
     const QVector<CwMacro>& macros() const { return m_macros; }
     void setCutOptions(const CwCutOptions& cut) { m_cut = cut; }
 
-    // F1 is index 0. A send during a message replaces it (stop, then the new
-    // one), as N1MM does: the operator pressing a key means "send THIS now".
+    // F1 is index 0. A send while radioMayBeSending() replaces what is going
+    // out (stop, then the new one), as N1MM does: the operator pressing a key
+    // means "send THIS now".
     Result sendMacro(int index);
 
-    // Esc / STOP (rule 3).
-    void stop();
+    // Esc / STOP (rule 3). False when no stop could be written (disabled, or
+    // no link), with the reason in lastError().
+    bool stop();
 
     // False when disabled or the sender wrote nothing.
     bool setSpeed(int wpm);
+    // Ask the radio for its speed again. False when disabled or not written.
+    bool requestSpeed();
 
     State   state() const { return m_state; }
+    // Whether a stop is owed before anything that would otherwise leave the
+    // radio keying: a new message, disabling, dropping the link. True while
+    // a message is in progress, and also while Idle if the radio still
+    // reports transmitting: Idle comes from timers and the Morse estimate,
+    // not the radio, so a late key, a speed change mid-message or a slow
+    // stop can leave it keying after the keyer thinks it is done. False
+    // while disabled, when the keyer sends nothing anyway.
+    bool    radioMayBeSending() const
+    {
+        return m_enabled && (m_state != State::Idle || m_transmitting);
+    }
     // Why the last send did not go, or a warning about one that did; empty
     // when there is nothing to say.
     QString lastError() const { return m_lastError; }

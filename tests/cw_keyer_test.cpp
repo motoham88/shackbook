@@ -11,7 +11,8 @@
 //   3. The state machine against real timers: the "didn't key" hint, a hang
 //      that survives transmit dropping between characters (seen on a
 //      FLEX-6500), stop when idle, stop mid-message, replace, disable
-//      mid-message, and a dropped connection.
+//      mid-message, a dropped connection, and Idle while the radio is still
+//      transmitting.
 //
 // Not covered here, because CwKeyer has no path to it: "saving a QSO sends
 // nothing". That is MainWindow's to prove when the panel is wired in.
@@ -242,7 +243,9 @@ void stateMachine()
     FakeSender s;
     s.speed = 1200;   // one unit per ms: Morse estimates stay short here
     CwKeyer k(&s, station);
-    k.setTimings(/*noKeyMs*/ 150, /*hangOverrideMs*/ 120, /*stopTimeoutMs*/ 300, /*busyMarginMs*/ 0);
+    // The hang is well clear of the 60 ms gap below, so a slow CI runner
+    // overshooting that pause cannot end the message early.
+    k.setTimings(/*noKeyMs*/ 150, /*hangOverrideMs*/ 400, /*stopTimeoutMs*/ 300, /*busyMarginMs*/ 0);
     k.setEnabled(true);
     s.log.clear();
     int didNotKey = 0, notConfirmed = 0;
@@ -291,7 +294,27 @@ void stateMachine()
     k.onTransmittingChanged(true);
     k.stop();
     check(waitFor([&] { return notConfirmed == 1; }), "a radio still transmitting after STOP is reported");
+
+    // ⭐ That leaves the keyer Idle with the radio still keying: Idle comes
+    // from timers, not the radio. Everything that owes a stop must still
+    // send one (#34 review).
+    check(k.state() == CwKeyer::State::Idle && k.radioMayBeSending(),
+          "Idle, but the radio is still transmitting: a stop is owed");
+    s.log.clear();
+    k.sendMacro(2);
+    check(s.log == QStringList({QStringLiteral("stop"), QStringLiteral("send:TU KX3H")}),
+          "an F-key then stops first, so the radio replaces rather than appends");
+    k.stop();
     k.onTransmittingChanged(false);
+    s.log.clear();
+    k.onTransmittingChanged(true);    // the radio keyed with the keyer Idle
+    check(k.state() == CwKeyer::State::Idle, "a transmit edge while Idle leaves it Idle");
+    k.setEnabled(false);
+    check(s.log == QStringList{QStringLiteral("stop")}, "and turning the keyer off then sends a stop");
+    check(!k.radioMayBeSending(), "a disabled keyer owes nothing: it sends nothing");
+    k.setEnabled(true);
+    k.onTransmittingChanged(false);
+    check(!k.radioMayBeSending(), "Idle and quiet: no stop owed");
     s.log.clear();
 
     // ⭐ A new message during one replaces it.
