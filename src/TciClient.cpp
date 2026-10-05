@@ -113,7 +113,6 @@ void TciClient::onConnected()
     // in AetherSDR's log as a "TCP drop" every ~990 ms (#32 on-air tests).
     cancelReconnect();
     m_reconnectAttempts = 0;
-    setConnected(true);
     // TCI dialect varies between servers — sending `start;` is enough for
     // AetherSDR, ExpertSDR2, and SunSDR-mb1.  Servers ignore unknown
     // commands.  We do NOT also send `iq_start;` etc — we don't want IQ.
@@ -122,6 +121,9 @@ void TciClient::onConnected()
     // QSO was actually made at (#23). Opt-in on AetherSDR; ignored by servers
     // that do not have them.
     send("tx_sensors_enable:true;");
+    // Announced only now, so that anything a listener sends on connect (the
+    // CW keyer's speed query) goes out after `start;`, not before it.
+    setConnected(true);
 }
 
 void TciClient::onDisconnected()
@@ -147,6 +149,13 @@ void TciClient::onDisconnected()
     if (m_transmitting) {
         m_transmitting = false;
         emit transmittingChanged(false);
+    }
+    // The old radio's mode must not stand in for the next one's: a stale
+    // "CW" would hold the CW keyer's mode gate open until the new server
+    // reports, and that is the unsafe direction.
+    if (!m_mode.isEmpty()) {
+        m_mode.clear();
+        emit modeChanged(m_mode);
     }
     setConnected(false);
     if (!m_userInitiatedDisconnect) {

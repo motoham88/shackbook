@@ -20,6 +20,7 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QHostAddress>
+#include <QStringList>
 #include <QWebSocket>
 #include <QWebSocketServer>
 
@@ -237,6 +238,42 @@ void clientEndToEnd()
           "and the stop reaches the server despite the disconnect");
 }
 
+// Connect order and a forgotten mode (#34 review).
+void connectOrderAndMode()
+{
+    std::printf("\n-- connect order, and the mode across a drop --\n");
+
+    constexpr quint16 kPort = 45842;
+    FakeTci server(kPort);
+    check(server.ok(), "fake TCI server bound to loopback");
+    if (!server.ok()) return;
+
+    TciClient tci;
+    // What the CW keyer does on connect while enabled: ask for the speed.
+    QObject::connect(&tci, &TciClient::connectionChanged, [&](bool up) {
+        if (up) tci.requestCwSpeed();
+    });
+    QStringList modes;
+    QObject::connect(&tci, &TciClient::modeChanged, [&](const QString& m) { modes << m; });
+
+    tci.connectToServer(QStringLiteral("127.0.0.1"), kPort);
+    check(waitFor([&] { return server.received.contains(QStringLiteral("cw_macros_speed;")); }),
+          "a speed query sent on connect arrives");
+    check(server.received.startsWith(QStringLiteral("start;")),
+          "and goes out after start;, not before it");
+
+    server.send(QStringLiteral("modulation:0,cw;"));
+    check(waitFor([&] { return tci.currentMode() == QStringLiteral("CW"); }), "the radio reports CW");
+
+    // ⭐ After a drop the old radio's CW must not keep the keyer's gate open.
+    modes.clear();
+    server.dropClient();
+    check(waitFor([&] { return !tci.connected(); }), "client notices the drop");
+    check(tci.currentMode().isEmpty(), "the mode is forgotten on disconnect");
+    check(modes == QStringList{QString()}, "and modeChanged(\"\") says so");
+    tci.disconnectFromServer();
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -246,6 +283,7 @@ int main(int argc, char** argv)
     formatter();
     disconnectedGuards();
     clientEndToEnd();
+    connectOrderAndMode();
 
     if (failures == 0) {
         std::printf("\ncw_send_test: all checks passed\n");
