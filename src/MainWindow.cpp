@@ -44,6 +44,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QInputDialog>
 #include <QProgressDialog>
@@ -420,8 +421,23 @@ void MainWindow::closeEvent(QCloseEvent* event)
 
 void MainWindow::stopCwBeforeLinkGoes()
 {
-    if (m_cwKeyer && m_cwKeyer->state() != CwKeyer::State::Idle)
-        m_cwPanel->stopNow();   // flushed by TciClient::stopCw()
+    if (!m_cwKeyer || m_cwKeyer->state() == CwKeyer::State::Idle) return;
+    const bool wasTransmitting = m_tci->transmitting();
+    m_cwPanel->stopNow();
+
+    // Measured on a FLEX-6500 via AetherSDR v26.10.1: a stop followed AT
+    // ONCE by a disconnect is lost and the message runs to the end (16 s);
+    // the same stop with 250 ms before the disconnect ends it in ~90 ms.
+    // So hold the link until the radio has unkeyed, which proves the stop
+    // was carried out, or 250 ms if it was not transmitting to begin with.
+    // Capped, and user input is held off meanwhile so nothing else can
+    // start in the middle of a disconnect.
+    QElapsedTimer t;
+    t.start();
+    while (t.elapsed() < 600) {
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 20);
+        if (wasTransmitting ? !m_tci->transmitting() : t.elapsed() >= 250) break;
+    }
 }
 
 MainWindow::~MainWindow()

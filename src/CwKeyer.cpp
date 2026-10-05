@@ -2,11 +2,28 @@
 
 #include "CwSender.h"
 
+#include <QLoggingCategory>
 #include <QTimer>
 
 #include <algorithm>
 
 namespace ShackBook {
+
+// Off by default. QT_LOGGING_RULES="shackbook.cw.debug=true" turns it on:
+// every send, stop, transmit edge and state change, for diagnosing on air.
+Q_LOGGING_CATEGORY(lcCw, "shackbook.cw", QtInfoMsg)
+
+namespace {
+const char* stateName(CwKeyer::State s)
+{
+    switch (s) {
+    case CwKeyer::State::Idle:     return "Idle";
+    case CwKeyer::State::Sending:  return "Sending";
+    case CwKeyer::State::Stopping: return "Stopping";
+    }
+    return "?";
+}
+} // namespace
 
 namespace {
 
@@ -21,6 +38,34 @@ constexpr int kNoKeyMs = 1500;
 constexpr int kStopTimeoutMs = 8000;
 
 constexpr int kMinHangMs = 400;
+
+// Added to the Morse-timing estimate of a message: the link and radio
+// latency before it keys (~100 ms measured) and the break-in hold after it.
+constexpr int kBusyMarginMs = 1000;
+
+// Morse for what cwSanitize() lets through, '.' dot and '-' dash.
+const char* morseFor(QChar c)
+{
+    switch (c.unicode()) {
+    case u'A': return ".-";    case u'B': return "-...";  case u'C': return "-.-.";
+    case u'D': return "-..";   case u'E': return ".";     case u'F': return "..-.";
+    case u'G': return "--.";   case u'H': return "....";  case u'I': return "..";
+    case u'J': return ".---";  case u'K': return "-.-";   case u'L': return ".-..";
+    case u'M': return "--";    case u'N': return "-.";    case u'O': return "---";
+    case u'P': return ".--.";  case u'Q': return "--.-";  case u'R': return ".-.";
+    case u'S': return "...";   case u'T': return "-";     case u'U': return "..-";
+    case u'V': return "...-";  case u'W': return ".--";   case u'X': return "-..-";
+    case u'Y': return "-.--";  case u'Z': return "--..";
+    case u'0': return "-----"; case u'1': return ".----"; case u'2': return "..---";
+    case u'3': return "...--"; case u'4': return "....-"; case u'5': return ".....";
+    case u'6': return "-...."; case u'7': return "--..."; case u'8': return "---..";
+    case u'9': return "----.";
+    case u'/': return "-..-."; case u'?': return "..--.."; case u'.': return ".-.-.-";
+    case u',': return "--..--"; case u'=': return "-...-"; case u'+': return ".-.-.";
+    case u'-': return "-....-";
+    default:   return nullptr;
+    }
+}
 
 } // namespace
 
@@ -140,12 +185,35 @@ int cwHangMs(int wpm)
     return std::max(kMinHangMs, 10 * 1200 / w);
 }
 
+int cwDurationMs(const QString& text, int wpm)
+{
+    const int w = wpm > 0 ? wpm : 20;
+    int units = 0;
+    bool inWord = false;    // a character has been sent in the current word
+    bool gapOwed = false;   // a word space is pending before the next character
+    for (const QChar c : text.toUpper()) {
+        if (c == u' ') { if (inWord) gapOwed = true; continue; }
+        const char* m = morseFor(c);
+        if (!m) continue;
+        if (gapOwed)     units += 7;
+        else if (inWord) units += 3;
+        for (const char* p = m; *p; ++p) {
+            if (p != m) units += 1;            // gap inside the character
+            units += (*p == '.') ? 1 : 3;
+        }
+        inWord = true;
+        gapOwed = false;
+    }
+    return units * 1200 / w;
+}
+
 
 CwKeyer::CwKeyer(ICwSender* sender, ContextProvider context, QObject* parent)
     : QObject(parent)
     , m_sender(sender)
     , m_context(std::move(context))
     , m_macros(defaultCwMacros())
+    , m_busyMarginMs(kBusyMarginMs)
 {
     m_noKeyTimer = new QTimer(this);
     m_noKeyTimer->setSingleShot(true);
@@ -156,6 +224,8 @@ CwKeyer::CwKeyer(ICwSender* sender, ContextProvider context, QObject* parent)
     m_hangTimer->setSingleShot(true);
     connect(m_hangTimer, &QTimer::timeout, this, &CwKeyer::onHangTimeout);
 
+    m_clock.start();
+
     m_stopTimer = new QTimer(this);
     m_stopTimer->setSingleShot(true);
     m_stopTimer->setInterval(kStopTimeoutMs);
@@ -164,11 +234,12 @@ CwKeyer::CwKeyer(ICwSender* sender, ContextProvider context, QObject* parent)
 
 CwKeyer::~CwKeyer() = default;
 
-void CwKeyer::setTimings(int noKeyMs, int hangOverrideMs, int stopTimeoutMs)
+void CwKeyer::setTimings(int noKeyMs, int hangOverrideMs, int stopTimeoutMs, int busyMarginMs)
 {
     m_noKeyTimer->setInterval(noKeyMs);
     m_hangOverrideMs = hangOverrideMs;
     m_stopTimer->setInterval(stopTimeoutMs);
+    if (busyMarginMs >= 0) m_busyMarginMs = busyMarginMs;
 }
 
 void CwKeyer::setEnabled(bool on)
@@ -220,10 +291,16 @@ CwKeyer::Result CwKeyer::sendMacro(int index)
     }
 
     // Replace a message in progress rather than appending to it.
-    if (m_state != State::Idle)
-        m_sender->stopCwText();
+    qCDebug(lcCw) << "sendMacro F" << index + 1 << "state" << stateName(m_state)
+                  << "transmitting" << m_transmitting << "keyed" << m_keyed;
+    if (m_state != State::Idle) {
+        const bool ok = m_sender->stopCwText();
+        qCDebug(lcCw) << "  replace: stop written" << ok;
+    }
 
-    if (!m_sender->sendCwText(x.text)) {
+    const bool sent = m_sender->sendCwText(x.text);
+    qCDebug(lcCw) << "  send" << x.text << "written" << sent;
+    if (!sent) {
         m_lastError = QStringLiteral("The radio link did not take the message");
         finish();
         return Result::Refused;
@@ -231,6 +308,10 @@ CwKeyer::Result CwKeyer::sendMacro(int index)
 
     if (!x.dropped.isEmpty())
         m_lastError = QStringLiteral("Not sent (no Morse for them): %1").arg(x.dropped);
+
+    const int estimateMs = cwDurationMs(x.text, m_sender->cwTextSpeed());
+    m_busyUntilMs = m_clock.elapsed() + estimateMs + m_busyMarginMs;
+    qCDebug(lcCw) << "  estimated" << estimateMs << "ms at" << m_sender->cwTextSpeed() << "wpm";
 
     // Already transmitting — the usual case for a replace, since with a
     // break-in delay the radio never leaves transmit between the stop and
@@ -253,7 +334,9 @@ void CwKeyer::stop()
     if (!m_enabled || !m_sender) return;
     // Always sent (rule 3): the radio may be draining a buffer we think is
     // empty, and a stop that arrives when nothing is sending costs nothing.
-    m_sender->stopCwText();
+    const bool ok = m_sender->stopCwText();
+    qCDebug(lcCw) << "stop: state" << stateName(m_state) << "transmitting" << m_transmitting
+                  << "written" << ok;
 
     m_noKeyTimer->stop();
     m_hangTimer->stop();
@@ -274,6 +357,7 @@ bool CwKeyer::setSpeed(int wpm)
 
 void CwKeyer::onTransmittingChanged(bool transmitting)
 {
+    qCDebug(lcCw) << "trx" << transmitting << "in" << stateName(m_state) << "keyed" << m_keyed;
     m_transmitting = transmitting;
     switch (m_state) {
     case State::Idle:
@@ -307,6 +391,7 @@ void CwKeyer::onConnectionChanged(bool connected)
 
 void CwKeyer::onNoKeyTimeout()
 {
+    qCDebug(lcCw) << "no-key timeout in" << stateName(m_state) << "keyed" << m_keyed;
     if (m_state != State::Sending || m_keyed) return;
     m_lastError = QStringLiteral("The radio didn't key. Check the TCI server supports CW macros");
     finish();
@@ -315,7 +400,17 @@ void CwKeyer::onNoKeyTimeout()
 
 void CwKeyer::onHangTimeout()
 {
-    if (m_state == State::Sending && !m_transmitting) finish();
+    qCDebug(lcCw) << "hang timeout in" << stateName(m_state) << "transmitting" << m_transmitting;
+    if (m_state != State::Sending || m_transmitting) return;
+    // Quiet for the hang, but Morse timing says the message is not over yet:
+    // a long gap in trx, not the end. Wait out the rest, then look again.
+    const qint64 left = m_busyUntilMs - m_clock.elapsed();
+    if (left > 0) {
+        qCDebug(lcCw) << "  not over by Morse timing:" << left << "ms left";
+        m_hangTimer->start(int(left));
+        return;
+    }
+    finish();
 }
 
 void CwKeyer::onStopTimeout()
@@ -342,6 +437,7 @@ void CwKeyer::finish()
 void CwKeyer::setState(State s)
 {
     if (s == m_state) return;
+    qCDebug(lcCw) << "state" << stateName(m_state) << "->" << stateName(s);
     m_state = s;
     emit stateChanged(m_state);
 }

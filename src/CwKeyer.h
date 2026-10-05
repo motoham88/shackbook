@@ -20,6 +20,7 @@
 // The pieces that decide what text goes out — token expansion, cut numbers,
 // sanitising — are free functions so they can be tested without a keyer.
 
+#include <QElapsedTimer>
 #include <QObject>
 #include <QString>
 #include <QVector>
@@ -92,6 +93,18 @@ bool isCwMode(const QString& mode);
 // as 20 WPM.
 int cwHangMs(int wpm);
 
+// How long `text` takes to send at `wpm`, by PARIS timing (dot 1, dash 3,
+// gap inside a character 1, between characters 3, between words 7 units;
+// one unit is 1200 / WPM ms). Characters without Morse count as nothing.
+// Unknown speed (0) is read as 20 WPM.
+//
+// Why the keyer needs it: on a FLEX via AetherSDR, trx was seen dropping
+// between words for longer than any sensible hang, so "the radio has been in
+// receive a while" alone ended messages early. A keyer that wrongly thinks a
+// message is over sends no stop on replace, disable or disconnect, and the
+// radio keeps sending what it holds.
+int cwDurationMs(const QString& text, int wpm);
+
 
 class CwKeyer : public QObject {
     Q_OBJECT
@@ -145,8 +158,9 @@ public:
     // The expanded text of the current message, exactly as sent.
     QString sendingText() const { return m_sendingText; }
 
-    // For tests: shorten the waits. hangOverrideMs > 0 replaces cwHangMs().
-    void setTimings(int noKeyMs, int hangOverrideMs, int stopTimeoutMs);
+    // For tests: shorten the waits. hangOverrideMs > 0 replaces cwHangMs();
+    // busyMarginMs >= 0 replaces the margin added to the Morse estimate.
+    void setTimings(int noKeyMs, int hangOverrideMs, int stopTimeoutMs, int busyMarginMs = -1);
 
 public slots:
     // Wire to the radio link's transmit and connection state. A connect
@@ -187,6 +201,11 @@ private:
     QTimer* m_hangTimer{nullptr};
     QTimer* m_stopTimer{nullptr};
     int     m_hangOverrideMs{0};
+    // When the current message should be over by Morse timing, on m_clock.
+    // Sending never ends before this, however quiet trx goes.
+    qint64  m_busyUntilMs{0};
+    int     m_busyMarginMs;
+    QElapsedTimer m_clock;
 };
 
 } // namespace ShackBook

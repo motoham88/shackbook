@@ -149,6 +149,16 @@ void text()
     check(cwHangMs(10) == 1200, "hang at 10 wpm covers a word space (1200 ms)");
     check(cwHangMs(60) == 400, "hang never drops under 400 ms");
     check(cwHangMs(0) == 600, "unknown speed reads as 20 wpm");
+
+    // PARIS is the standard word: 43 units, 50 with its word space.
+    check(cwDurationMs(QStringLiteral("PARIS"), 20) == 2580, "PARIS at 20 wpm: 43 units = 2580 ms");
+    check(cwDurationMs(QStringLiteral("PARIS PARIS"), 20) == 5580, "two words: 43 + 7 + 43 units");
+    check(cwDurationMs(QStringLiteral("  paris  "), 20) == 2580, "edge spaces and case do not count");
+    check(cwDurationMs(QStringLiteral("E"), 20) == 60, "E is one dot");
+    check(cwDurationMs(QStringLiteral("PARIS"), 0) == 2580, "unknown speed reads as 20 wpm");
+    check(cwDurationMs(QString(), 20) == 0, "nothing takes no time");
+    check(cwDurationMs(QStringLiteral("CQ KX3H KX3H TEST"), 19) > 7000,
+          "F1's CQ at 19 wpm is over seven seconds");
 }
 
 void gates()
@@ -230,8 +240,9 @@ void stateMachine()
     std::printf("\n-- sending, stopping, and the radio's transmit state --\n");
 
     FakeSender s;
+    s.speed = 1200;   // one unit per ms: Morse estimates stay short here
     CwKeyer k(&s, station);
-    k.setTimings(/*noKeyMs*/ 150, /*hangOverrideMs*/ 120, /*stopTimeoutMs*/ 300);
+    k.setTimings(/*noKeyMs*/ 150, /*hangOverrideMs*/ 120, /*stopTimeoutMs*/ 300, /*busyMarginMs*/ 0);
     k.setEnabled(true);
     s.log.clear();
     int didNotKey = 0, notConfirmed = 0;
@@ -340,6 +351,32 @@ void stateMachine()
     k.onConnectionChanged(false);
     check(k.state() == CwKeyer::State::Idle && s.log.isEmpty(),
           "a dropped connection: Idle, nothing sent, nothing queued");
+
+    // ⭐ A gap in trx longer than the hang, mid-message, is not the end.
+    // Seen on air: a FLEX via AetherSDR dropped trx between words for longer
+    // than the hang; the keyer went Idle with CQ still going, so F3 sent no
+    // stop and TU queued behind the rest of the CQ.
+    {
+        FakeSender s2;
+        s2.speed = 120;    // 10 ms a unit: "CQ KX3H KX3H TEST" is ~1 s
+        CwKeyer k2(&s2, station);
+        k2.setTimings(/*noKeyMs*/ 150, /*hangOverrideMs*/ 80, /*stopTimeoutMs*/ 300, /*busyMarginMs*/ 0);
+        k2.setEnabled(true);
+        k2.sendMacro(0);
+        k2.onTransmittingChanged(true);
+        k2.onTransmittingChanged(false);
+        pause(300);                    // far longer than the 80 ms hang
+        check(k2.state() == CwKeyer::State::Sending,
+              "a long trx gap before the Morse estimate runs out is still Sending");
+        s2.log.clear();
+        k2.sendMacro(2);
+        check(s2.log.size() == 2 && s2.log.first() == QStringLiteral("stop"),
+              "so F3 then still stops the CQ before sending");
+        k2.onTransmittingChanged(true);
+        k2.onTransmittingChanged(false);
+        check(waitFor([&] { return k2.state() == CwKeyer::State::Idle; }, 3000),
+              "Idle once the estimate has run out and the radio is quiet");
+    }
 
     // Speed passes through while enabled.
     check(k.setSpeed(28) && s.log.last() == QStringLiteral("speed:28"), "speed passes through");

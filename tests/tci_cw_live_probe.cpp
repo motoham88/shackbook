@@ -13,6 +13,9 @@
 //
 //   tci_cw_live_probe <host> <port>               read-only (the default)
 //   tci_cw_live_probe <host> <port> --transmit    keys the transmitter
+//   tci_cw_live_probe <host> <port> --stop-tests  keys it: does a stop survive
+//                                                 being followed AT ONCE by a new
+//                                                 message, or by a disconnect?
 //
 // Read-only mode sends nothing but `start;` and the speed query
 // `cw_macros_speed;`.
@@ -144,6 +147,95 @@ void speedStep(TciClient& tci, int wpm)
                          QString::number(tci.cwSpeedWpm()));
 }
 
+// --stop-tests. A stop sent on its own ends a message within ~90 ms on a
+// FLEX via AetherSDR, yet in ShackBook a stop followed at once by a new
+// message (F-key replace) or by a disconnect let the message run to the end.
+// Each case here sends a long message, stops 1.5 s in, then does the follow-up
+// either at once or after a pause, and times the radio through a SECOND
+// connection that stays up — the only way to see what the radio does after
+// the first one has gone.
+void runStopTests(TciClient& tci, const QString& host, quint16 port)
+{
+    const QString longText = QStringLiteral("TEST TEST TEST TEST TEST TEST TEST TEST TEST TEST");
+
+    TciClient obs;
+    obs.connectToServer(host, port);
+    if (!waitFor([&] { return obs.connected(); }, 5000)) {
+        say("!! observer could not connect");
+        return;
+    }
+    pause(1500);
+    QObject::connect(&obs, &TciClient::transmittingChanged, [](bool on) {
+        say(on ? "   (observer) trx:0,true" : "   (observer) trx:0,false");
+    });
+
+    auto run = [&](const char* label, int pauseMs, bool disconnect) {
+        say("-- %s", QString::fromLatin1(label));
+        if (!tci.connected()) {
+            tci.connectToServer(host, port);
+            if (!waitFor([&] { return tci.connected() && isCwMode(tci.currentMode()); }, 8000)) {
+                say("!! could not reconnect; skipping");
+                return;
+            }
+            pause(1000);
+        }
+        say("> cw_macros:0,%s;", longText);
+        tci.sendCw(longText);
+        if (!waitFor([&] { return obs.transmitting(); }, 3000)) {
+            say("!! the radio did not key; skipping");
+            return;
+        }
+        pause(1500);
+
+        QElapsedTimer t;
+        t.start();
+        // Timed from the stop, including any unkey during the pause below —
+        // which is exactly when an honoured stop shows up.
+        qint64 unkeyDuringPause = -1;
+        auto c = QObject::connect(&obs, &TciClient::transmittingChanged, [&](bool on) {
+            if (!on) unkeyDuringPause = t.elapsed();
+        });
+        say("> cw_macros_stop;");
+        tci.stopCw();
+        if (pauseMs > 0) pause(pauseMs);
+        QObject::disconnect(c);
+        if (disconnect) {
+            say("> (disconnect)");
+            tci.disconnectFromServer();
+        } else {
+            say("> cw_macros:0,TU;");
+            tci.sendCw(QStringLiteral("TU"));
+        }
+
+        int segments = 0;
+        qint64 lastUnkey = -1;
+        if (!waitForMessageEnd(obs, 30000, segments, lastUnkey, t)) {
+            say("!! still keying 30 s after the stop");
+            return;
+        }
+        if (lastUnkey < 0) lastUnkey = unkeyDuringPause;
+        // The long message has ~10 s left at 24 wpm when the stop goes.
+        // "TU" alone is under a second.
+        const bool honoured = lastUnkey >= 0 && lastUnkey < (disconnect ? 1500 : 3000);
+        say("== %s", QStringLiteral("radio quiet: last unkey %1 ms after the stop  =>  %2")
+                         .arg(lastUnkey)
+                         .arg(honoured ? QStringLiteral("STOP HONOURED")
+                                       : QStringLiteral("STOP IGNORED (message ran on)")));
+        pause(1500);
+    };
+
+    run("5a. stop, then a new message AT ONCE (F-key replace)", 0, false);
+    run("5b. stop, 250 ms, then a new message", 250, false);
+    run("6a. stop, then disconnect AT ONCE", 0, true);
+    run("6b. stop, 250 ms, then disconnect", 250, true);
+
+    if (!tci.connected()) {
+        tci.connectToServer(host, port);
+        waitFor([&] { return tci.connected(); }, 5000);
+    }
+    obs.disconnectFromServer();
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -152,17 +244,21 @@ int main(int argc, char** argv)
     g_clock.start();
 
     if (argc < 3) {
-        std::fprintf(stderr, "usage: tci_cw_live_probe <host> <port> [--transmit]\n");
+        std::fprintf(stderr, "usage: tci_cw_live_probe <host> <port> [--transmit | --stop-tests]\n");
         return 2;
     }
     const QString host = QString::fromUtf8(argv[1]);
     const quint16 port = quint16(QString::fromUtf8(argv[2]).toUInt());
-    const bool transmit = argc > 3 && QByteArray(argv[3]) == "--transmit";
+    const bool stopTests = argc > 3 && QByteArray(argv[3]) == "--stop-tests";
+    const bool transmit  = stopTests || (argc > 3 && QByteArray(argv[3]) == "--transmit");
 
     TciClient tci;
-    QObject::connect(&tci, &TciClient::rawMessageReceived, [](const QString& l) {
-        say("< %s;", l);
-    });
+    // The stop tests print only the observer's trx and the results.
+    if (!stopTests) {
+        QObject::connect(&tci, &TciClient::rawMessageReceived, [](const QString& l) {
+            say("< %s;", l);
+        });
+    }
 
     tci.connectToServer(host, port);
     if (!waitFor([&] { return tci.connected(); }, 5000)) {
@@ -207,6 +303,13 @@ int main(int argc, char** argv)
         std::fflush(stdout);
         pause(1000);
         if (!tci.connected()) { say("!! connection lost; not transmitting"); return 1; }
+    }
+
+    if (stopTests) {
+        runStopTests(tci, host, port);
+        say("== done");
+        tci.disconnectFromServer();
+        return 0;
     }
 
     say("-- 1. a short message, left to finish");
